@@ -1,15 +1,16 @@
+"""Helper tools for caching."""
+
 import os
 import binascii
 import datetime
 from functools import wraps
-from flask import request, Response, make_response
+from flask import request, make_response
 from tsa.extensions import cache
 
 
+def cached(cacheable=False, must_revalidate=True, client_only=True, client_timeout=0, server_timeout=5 * 60, key='view/%s'):
+    """Flask cache decorator.
 
-def cached(cacheable = False, must_revalidate = True, client_only = True, client_timeout = 0, server_timeout = 5 * 60, key='view/%s'):
-    """
-    Flask cache decorator.
     See https://codereview.stackexchange.com/q/147038,
         https://jakearchibald.com/2016/caching-best-practices/ and
         https://developers.google.com/web/fundamentals/performance/optimizing-content-efficiency/http-caching
@@ -18,13 +19,12 @@ def cached(cacheable = False, must_revalidate = True, client_only = True, client
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            cache_key = key % request.full_path # include querystring
+            cache_key = key % request.full_path  # include querystring
             cache_policy = ''
-            etag = ''
             if not cacheable:
-                cache_policy += ', no-store' # tells the browser not to cache at all
+                cache_policy += ', no-store'  # tells the browser not to cache at all
             else:
-                if must_revalidate: # this looks contradicting if you haven't read the article.
+                if must_revalidate:  # this looks contradicting if you haven't read the article.
                     # no-cache doesn't mean "don't cache", it means it must check
                     # (or "revalidate" as it calls it) with the server before
                     # using the cached resource

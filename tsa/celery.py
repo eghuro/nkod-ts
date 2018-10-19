@@ -1,6 +1,9 @@
+"""Celery setup - raven hook and configuration."""
+
 import celery
 import raven
 from raven.contrib.celery import register_signal, register_logger_signal
+
 
 class Celery(celery.Celery):
     def on_configure(self):

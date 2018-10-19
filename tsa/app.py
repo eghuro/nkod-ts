@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """The app module, containing the app factory function."""
+
+import logging
+
 from flask import Flask, render_template, g
 
 from tsa import commands, public
 from tsa.extensions import bcrypt, cache, csrf_protect, db, debug_toolbar, migrate, sentry, webpack
 from tsa.settings import ProdConfig
-import logging
 
 
 def create_app(config_object=ProdConfig):
@@ -13,13 +15,9 @@ def create_app(config_object=ProdConfig):
 
     :param config_object: The configuration object to use.
     """
-
     app = Flask(__name__.split('.')[0])
     app.config.from_object(config_object)
     app.config['SENTRY_CONFIG']['environment'] = app.config['ENV']
-
-    from werkzeug.contrib.fixers import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app)
 
     register_extensions(app)
     register_blueprints(app)
@@ -57,7 +55,7 @@ def register_errorhandlers(app):
         if error_code == 400:
             error_code = 401
         return render_template('{0}.html'.format(error_code), event_id=g.sentry_event_id,
-                        public_dsn=sentry.client.get_public_dsn('https')), error_code
+                               public_dsn=sentry.client.get_public_dsn('https')), error_code
     for errcode in [400, 401, 404, 500]:
         app.errorhandler(errcode)(render_error)
     return None
@@ -68,8 +66,7 @@ def register_shellcontext(app):
     def shell_context():
         """Shell context objects."""
         return {
-            'db': db,
-            'User': user.models.User}
+            'db': db}
 
     app.shell_context_processor(shell_context)
 

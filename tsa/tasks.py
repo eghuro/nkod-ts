@@ -1,4 +1,1 @@
-from celery import group
-from tsa.celery import celery
-
-
+"""Celery tasks invoked from the API endpoints."""

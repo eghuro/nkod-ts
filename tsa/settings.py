@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Application configuration."""
+
 import os
+
 import raven
+
 
 class Config(object):
     """Base configuration."""
@@ -52,6 +55,7 @@ class DevConfig(Config):
     SQLALCHEMY_DATABASE_URI = 'sqlite:///{0}'.format(DB_PATH)
     DEBUG_TB_ENABLED = True
     CACHE_TYPE = 'simple'  # Can be "memcached", "redis", etc.
+
 
 class TestConfig(Config):
     """Test configuration."""
