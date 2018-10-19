@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <title>TimeSeries Analyser | feedback</title>
+
+        <!-- Bootstrap core CSS -->
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    </head>
+
+    <body class="bg-light">
+        <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="/">Crawlcheck.io</a></li><li class="breadcrumb-item active" aria-current="page">Configure</li></ol></nav>
+        <div class="container">
+            <div class="py-5 text-center">
+                <h2>TimeSeries Analyser</h2>
+            </div>
+
+            {% with messages = get_flashed_messages() %}
+            {% if messages %}
+            <div>
+                {% for message in messages %}
+                <div class="alert alert-danger" role="alert">{{ message }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endwith %}
+
+	    <div class="order-md-1">
+	        {% if request.sentry.id %}
+		<script>
+                    Raven.showReportDialog({
+	                eventId: '{{ request.sentry.id }}',
+
+	                // use the public DSN (dont include your secret!)
+	                dsn: 'https://d1b87aca769e489fb67debf20df91c0b@sentry.io/1260183'
+		    });
+		</script>
+		{% endif %}
+	    </div>
+
+        </div>
+        <!-- Bootstrap core JavaScript
+        ================================================== -->
+        <!-- Placed at the end of the document so the pages load faster -->
+        <script src="https://code.jquery.com/jquery-3.3.1.min.js" integrity="sha384-tsQFqpEReu7ZLhBV2VZlAu7zcOV+rXbYlF2cqB8txI/8aZajjp4Bqd+V6D5IgvKT" crossorigin="anonymous"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js" integrity="sha384-smHYKdLADwkXOn1EmN1qk/HfnUcbVRZyYmZ4qpPea6sjB/pTJ0euyQp0Mk8ck+5T" crossorigin="anonymous"></script>
+	<script src="https://cdn.ravenjs.com/3.26.4/raven.min.js" integrity="sha384-7zaZhdtWTKq5xNtp4WyvUJvEQ+aETU+FlQnpLIbepx2bQAee8znJJjmlydqQjbn/" crossorigin="anonymous"></script>
+
+        <script>
+Raven.config('https://d1b87aca769e489fb67debf20df91c0b@sentry.io/1260183', {release: {{config.RELEASE}}, environment: {{config.ENV}}}).install()
+        </script>
+    </body>
+</html>

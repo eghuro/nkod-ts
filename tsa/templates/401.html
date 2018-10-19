@@ -1,0 +1,23 @@
+
+{% extends "layout.html" %}
+
+{% block page_title %}Unauthorized{% endblock %}
+
+{% block content %}
+<div class="jumbotron">
+    <div class="text-center">
+        <h1>401</h1>
+        <p>You are not authorized to see this page.</p>
+        <p>Want to <a href="{{ url_for('public.config') }}">go to configurator</a> instead?</p>
+    </div>
+
+    {% if event_id %}
+    <script>
+        Raven.showReportDialog({
+	      eventId: '{{ event_id }}',
+	          dsn: '{{ public_dsn }}'
+        });
+    </script>
+    {% endif %}
+</div>
+{% endblock %}
