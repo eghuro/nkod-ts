@@ -1,14 +1,21 @@
 """Helper tools for caching."""
 
-import os
 import binascii
 import datetime
+import os
 from functools import wraps
+
 from flask import request, make_response
+
 from tsa.extensions import cache
 
 
-def cached(cacheable=False, must_revalidate=True, client_only=True, client_timeout=0, server_timeout=5 * 60, key='view/%s'):
+def cached(cacheable=False,
+           must_revalidate=True,
+           client_only=True,
+           client_timeout=0,
+           server_timeout=5 * 60,
+           key='view/%s'):
     """Flask cache decorator.
 
     See https://codereview.stackexchange.com/q/147038,
