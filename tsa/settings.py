@@ -16,18 +16,18 @@ class Config(object):
     BCRYPT_LOG_ROUNDS = 13
     DEBUG_TB_ENABLED = False  # Disable Debug toolbar
     DEBUG_TB_INTERCEPT_REDIRECTS = False
-    CACHE_TYPE = 'simple'  # Can be "memcached", "redis", etc.
+    CACHE_TYPE = 'redis'  # Can be "memcached", "redis", etc.
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WEBPACK_MANIFEST_PATH = 'webpack/manifest.json'
-    CELERY_BROKER_URL = 'redis://localhost:6379/0'
-    CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
-    REDIS_HOST = 'localhost'
+    CELERY_BROKER_URL = 'redis://redis:6379/0'
+    CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
+    REDIS_HOST = 'redis'
     REDIS_PORT = 6379
     REDIS_DB = 0
     CACHE_KEY_PREFIX = 'fcache'
-    CACHE_REDIS_HOST = 'localhost'
+    CACHE_REDIS_HOST = 'redis'
     CACHE_REDIS_PORT = '6379'
-    CACHE_REDIS_URL = 'redis://localhost:6379/0'
+    CACHE_REDIS_URL = 'redis://redis:6379/0'
     SENTRY_CONFIG = {
         'dsn': 'https://9df1f926d1854fa4884d1f0ce9489a0b@sentry.io/1304923',
         'release': RELEASE,
@@ -41,7 +41,6 @@ class ProdConfig(Config):
     DEBUG = False
     SQLALCHEMY_DATABASE_URI = 'postgresql://alex@localhost/nkod'
     DEBUG_TB_ENABLED = False  # Disable Debug toolbar
-    SOCKET_IO_REDIS_URL = 'redis://localhost:6379/0'
 
 
 class DevConfig(Config):
