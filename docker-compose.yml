@@ -2,10 +2,39 @@ version: '2'
 services:
   web:
     build: .
+    environment:
+      - REDIS=redis://redis:6379/0
     ports:
       - "80:8000"
+    links:
+      - celery
   redis:
     image: "redis:alpine"
   celery:
     build: .
+    environment:
+      - ETL=http://etl:8080
+      - VIRTUOSO=http://virtuoso:8890
+      - DBA_PASSWORD=myDbaPassword
+      - REDIS=redis://redis:6379/0
+    user: nobody
+    links:
+      - redis
+      - virtuoso
+      - etl
     command: celery worker -l info -A tsa.tasks
+  virtuoso:
+    image: tenforce/virtuoso:1.3.1-virtuoso7.2.2
+    environment:
+      - SPARQL_UPDATE="true"
+      - DEFAULT_GRAPH="http://www.example.com/my-graph"
+      - DBA_PASSWORD="myDbaPassword"
+    ports:
+      - "8890:8890"
+      - "1111:1111"
+    volumes:
+      - ./data/virtuoso:/data
+  etl:
+    image: "lp-etl"
+    ports:
+      - "8080:8080"
