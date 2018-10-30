@@ -5,7 +5,7 @@ import datetime
 import os
 from functools import wraps
 
-from flask import request, make_response
+from flask import make_response, request
 
 from tsa.extensions import cache
 

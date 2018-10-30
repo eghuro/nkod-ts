@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """Public section, including homepage and signup."""
 import logging
+import uuid
+
 import redis
 import rfc3987
 from atenvironment import environment
-from collections import defaultdict
-from flask import abort, Blueprint, current_app, jsonify, render_template, request, url_for
-from tsa.tasks import hello, system_check, analyze, analyze_upload
+from celery import group
+from flask import Blueprint, abort, current_app, jsonify, render_template, request
+
+from tsa.tasks import analyze, analyze_upload, hello, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -19,7 +22,7 @@ def home():
 
 @blueprint.route('/api/v1/test/base')
 def test_basic():
-    return "Hello world!"
+    return 'Hello world!'
 
 
 @blueprint.route('/api/v1/test/job')
@@ -32,7 +35,7 @@ def test_celery():
 def test_system():
     x = (system_check.s() | hello.si()).delay().get()
     log = logging.getLogger(__name__)
-    log.info(f"System check result: {x!s}")
+    log.info(f'System check result: {x!s}')
     return str(x)
 
 
@@ -41,7 +44,7 @@ def api_analyze_iri():
     iri = request.args.get('iri', None)
     etl = bool(int(request.args.get('etl', 1)))
 
-    current_app.logger.info("ETL: " + str(etl))
+    current_app.logger.info(f'ETL:{etl!s}')
 
     if rfc3987.match(iri):
         return jsonify(analyze.delay(iri, etl).get())
@@ -56,7 +59,9 @@ def api_analyze_upload(redis_url):
 
     def read_in_chunks(file_object, chunk_size=1024):
         """Lazy function (generator) to read a file piece by piece.
-        Default chunk size: 1k."""
+
+        Default chunk size: 1k.
+        """
         while True:
             data = file_object.read(chunk_size)
             if not data:
@@ -65,7 +70,7 @@ def api_analyze_upload(redis_url):
 
     keys = []
     mimes = []
-    r = redis.StrictRedis.from_url(redis_url, charset="utf-8", decode_responses=True)
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     for file in request.files:
         key = str(uuid.uuid4())
         keys.append(key)
@@ -77,13 +82,13 @@ def api_analyze_upload(redis_url):
     g = group(analyze_upload.s(k, m, etl) for k, m in zip(keys, mimes))
     return jsonify(g.apply_async().get())
 
-        
+
 @blueprint.route('/api/v1/query')
 @environment('REDIS')
 def index(redis_url):
-    r = redis.StrictRedis.from_url(redis_url, charset="utf-8", decode_responses=True)
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     iri = request.args.get('iri', None)
-    current_app.logger.info("Querying for: " + iri)
+    current_app.logger.info(f'Querying for: {iri}')
     if rfc3987.match(iri):
         if not r.exists(iri):
             abort(404)

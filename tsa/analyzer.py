@@ -1,8 +1,7 @@
-import json
-import uuid
 from collections import defaultdict
+
 from rdflib.namespace import RDF
-from tsa.extensions import redis
+
 
 class Analyzer(object):
 

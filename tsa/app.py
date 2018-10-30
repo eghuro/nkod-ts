@@ -3,7 +3,7 @@
 
 import logging
 
-from flask import Flask, render_template, g
+from flask import Flask, g, render_template
 
 from tsa import commands, public
 from tsa.extensions import bcrypt, cache, csrf_protect, db, debug_toolbar, migrate, sentry, webpack

@@ -2,7 +2,7 @@
 
 import celery
 import raven
-from raven.contrib.celery import register_signal, register_logger_signal
+from raven.contrib.celery import register_logger_signal, register_signal
 
 
 class Celery(celery.Celery):
