@@ -15,8 +15,8 @@ from tsa.transformation import PipelineFactory
 
 
 @celery.task
-@environment('ETL', 'VIRTUOSO')
-def system_check(etl, virtuoso):
+@environment('ETL', 'VIRTUOSO', 'REDIS')
+def system_check(etl, virtuoso, redis_url):
     log = logging.getLogger(__name__)
     log.info('System check started')
     log.info(f'Testing LP-ETL, URL: {etl!s}')
@@ -26,6 +26,8 @@ def system_check(etl, virtuoso):
     log.info(f'Testing virtuoso, URL: {virtuoso_url}')
     requests.get(virtuoso_url).raise_for_status()
 
+    r = redis.StrictRedis().from_url(redis_url)
+    r.ping()
     log.info('System check successful')
 
 
