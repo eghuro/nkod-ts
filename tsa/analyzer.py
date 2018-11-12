@@ -5,6 +5,20 @@ from rdflib.namespace import RDF
 
 class Analyzer(object):
 
+    def __init__(self, iri):
+        self.__iri_analyzed = iri
+
+
+    def find_related(self, graph):
+        for s, p, o in g:
+            yield (s, p)
+            yield (p, o)
+            yield (s, o)
+            yield (s, self.__iri_analyzed)
+            yield (p, self.__iri_analyzed)
+            yield (o, self.__iri_analyzed)
+
+
     def analyze(self, graph):
         triples = len(graph)
         predicates_count = defaultdict(int)

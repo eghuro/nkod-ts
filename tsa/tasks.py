@@ -43,6 +43,7 @@ def analyze(iri, etl=True):
     if etl:
         (transform.s(iri) | poll.s() | inspect.s()).apply_async()
     else:
+        #TODO: split into sub-tasks: parse -> index | analyze
         guess = rdflib.util.guess_format(iri)
         if guess is None:
             r = requests.head(iri)
@@ -51,31 +52,24 @@ def analyze(iri, etl=True):
         g = rdflib.ConjunctiveGraph()
         log.info(f'Guessing format to be {guess!s}')
         g.parse(iri, format=guess)
-        a = Analyzer()
-        index(g, iri)
+
+        a = Analyzer(iri)
+        index(g, analyzer)
         return a.analyze(g)
 
 
 @environment('REDIS')
-def index(g, source_iri, redis_cfg):
+def index(g, analyzer, redis_cfg):
     r = redis.StrictRedis.from_url(redis_cfg)
     pipe = r.pipeline()
     exp = 60 * 60  # 1H
-    for (s, p, o) in g:
-        s = str(s)
-        p = str(p)
-        o = str(o)
-        source_iri = str(source_iri)
 
-        pipe.sadd(s, source_iri, p, o)
-        pipe.sadd(p, source_iri, s, o)
-        pipe.sadd(o, source_iri, p, s)
-        pipe.sadd(source_iri, s, p, o)
+    for iri_a, iri_b in analyzer.find_related(g):
+        pipe.sadd(iri_a, iri_b)
+        pipe.sadd(iri_b, iri_a)
 
-        pipe.expire(s, exp)
-        pipe.expire(p, exp)
-        pipe.expire(o, exp)
-        pipe.expire(source_iri, exp)
+        pipe.expire(iri_a, exp)
+        pipe.expire(iri_b, exp)
     pipe.execute()
 
 
