@@ -42,7 +42,7 @@ def test_system():
 @blueprint.route('/api/v1/analyze', methods=['GET'])
 def api_analyze_iri():
     iri = request.args.get('iri', None)
-    etl = bool(int(request.args.get('etl', 1)))
+    etl = bool(int(request.args.get('etl', 0)))
 
     current_app.logger.info(f'ETL:{etl!s}')
 
@@ -83,16 +83,44 @@ def api_analyze_upload(redis_url):
     return jsonify(g.apply_async().get())
 
 
-@blueprint.route('/api/v1/query')
+@blueprint.route('/api/v1/query/dataset')
 @environment('REDIS')
-def index(redis_url):
+def ds_index(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     iri = request.args.get('iri', None)
-    current_app.logger.info(f'Querying for: {iri}')
+    current_app.logger.info(f'Querying dataset for: {iri}')
     if rfc3987.match(iri):
-        if not r.exists(iri):
+        if not r.exists("key:"+iri):
             abort(404)
         else:
-            return jsonify([str(x) for x in r.smembers(iri)])
+            all_ds = set()
+            d = dict()
+            for key in r.smembers("key:"+iri):
+                related = set(r.smembers("related:"+key))
+                current_app.logger.info("Related datasets: " + str(related))
+                all_ds.update(related)
+                current_app.logger.info("All DS: " + str(all_ds))
+                related.discard(iri)
+                if len(related) > 0:
+                    d[key] = list(related)
+            e = dict()
+            for ds in all_ds:
+                e[ds] = list(r.smembers("distr:"+ds))
+            return jsonify({"related": d, "distribution": e})
+    else:
+        abort(400)
+
+
+@blueprint.route('/api/v1/query/distribution')
+@environment('REDIS')
+def distr_index(redis_url):
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    iri = request.args.get('iri', None)
+    current_app.logger.info(f'Querying distribution for: {iri}')
+    if rfc3987.match(iri):
+        if not r.exists("ds:"+iri):
+            abort(404)
+        else:
+            return jsonify(list(r.smembers("ds:"+iri)))
     else:
         abort(400)

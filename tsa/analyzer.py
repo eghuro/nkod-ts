@@ -1,22 +1,59 @@
 from collections import defaultdict
+import logging
 from rdflib import Namespace
 from rdflib.namespace import RDF
 
 
 class Analyzer(object):
 
+    qb = Namespace("http://purl.org/linked-data/cube#")
+
     def __init__(self, iri):
-        self.__iri_analyzed = iri
+        self.distribution = iri
 
 
-    def find_related(self, graph):
-        for s, p, o in g:
-            yield (s, p)
-            yield (p, o)
-            yield (s, o)
-            yield (s, self.__iri_analyzed)
-            yield (p, self.__iri_analyzed)
-            yield (o, self.__iri_analyzed)
+    def find_relation(self, graph):
+        #datasety souvisi, pokud sdileji resource na dimenzi
+        # tzn. yield (dataset, resource na dimenzi)
+        log = logging.getLogger(__name__)
+        log.info("Looking up resources used on a dimension")
+        for ds, resource in self.__resource_on_dimension(graph):
+            log.info(f'Dataset: {ds} - Resource on dimension: {resource}')
+            yield ds, resource
+
+
+    def __dimensions(self, graph):
+        d = defaultdict(set)
+        for dsd in graph.subjects(RDF.type, Analyzer.qb.DataStructureDefinition):
+            for component in graph.objects(dsd, Analyzer.qb.component):
+                for dimension in graph.objects(component, Analyzer.qb.dimension):
+                    d[dsd].add(dimension)
+        return d
+
+
+    def __dataset_dimensions(self, graph, dimensions):
+        d = defaultdict(set)
+        for ds in graph.subjects(RDF.type, Analyzer.qb.DataSet):
+            for structure in graph.objects(ds, Analyzer.qb.structure):
+                if structure in dimensions.keys():
+                    d[ds].update(dimensions[structure])
+        return d
+
+
+    def __resource_on_dimension(self, graph):
+        log = logging.getLogger(__name__)
+        log.info("Looking up resources on dimensions")
+        ds_dimensions = self.__dataset_dimensions(graph, self.__dimensions(graph))
+        log.info("Dimensions: " + str(ds_dimensions))
+        for observation in graph.subjects(RDF.type, Analyzer.qb.Observation):
+            log.info("Observation: " + str(observation))
+            for dataset in graph.objects(observation, Analyzer.qb.dataSet):
+                log.info("Dataset: " + str(dataset))
+                for dimension in ds_dimensions[dataset]:
+                    log.info("Dimension: " + str(dimension))
+                    for resource in graph.objects(observation, dimension):
+                        log.info("Resource: " + str(resource))
+                        yield dataset, resource
 
 
     def analyze(self, graph):
@@ -37,15 +74,15 @@ class Analyzer(object):
             for structure in graph.objects(dataset, qb.structure):
                 for component in graph.objects(structure, qb.component):
                     for dimension in graph.objects(component, qb.dimension):
-                        datasets[dataset].dimensions.add(dimension)
+                        datasets[str(dataset)].dimensions.add(str(dimension))
                     for measure in graph.objects(component, qb.measure):
-                        datasets[dataset].measures.add(measure)
+                        datasets[str(dataset)].measures.add(str(measure))
 
         summary = {
             'triples': triples,
             'predicates': predicates_count,
             'classes': list(classes),
-            'datasets': datasets
+            'datasets': str(datasets)
         }
 
         return summary
@@ -62,3 +99,6 @@ class QbDataset(object):
             'dimensions': list(self.dimensions),
             'measures': list(self.measures)
         })
+
+    def __str__(self):
+        return self.__repr__()

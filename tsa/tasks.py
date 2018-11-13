@@ -26,6 +26,7 @@ def system_check(etl, virtuoso, redis_url):
     log.info(f'Testing virtuoso, URL: {virtuoso_url}')
     requests.get(virtuoso_url).raise_for_status()
 
+    log.info(f'Testing redis, URL: {redis_url}')
     r = redis.StrictRedis().from_url(redis_url)
     r.ping()
     log.info('System check successful')
@@ -54,23 +55,29 @@ def analyze(iri, etl=True):
         g.parse(iri, format=guess)
 
         a = Analyzer(iri)
-        index(g, analyzer)
+        index(g, a)
         return a.analyze(g)
 
 
 @environment('REDIS')
 def index(g, analyzer, redis_cfg):
+    log = logging.getLogger(__name__)
     r = redis.StrictRedis.from_url(redis_cfg)
     pipe = r.pipeline()
     exp = 60 * 60  # 1H
 
-    for iri_a, iri_b in analyzer.find_related(g):
-        pipe.sadd(iri_a, iri_b)
-        pipe.sadd(iri_b, iri_a)
+    log.info("Indexing ...")
+    cnt = 0
+    for ds, key in analyzer.find_relation(g):
+        log.info(f'Related: {ds} - {key}')
+        pipe.sadd("related:"+key, ds)
+        pipe.sadd("key:"+ds, key)
+        pipe.sadd("ds:"+analyzer.distribution, ds)
+        pipe.sadd("distr:"+ds, analyzer.distribution)
 
-        pipe.expire(iri_a, exp)
-        pipe.expire(iri_b, exp)
+        cnt = cnt + 6
     pipe.execute()
+    log.info("Indexed " + str(cnt) + " records")
 
 
 @celery.task
