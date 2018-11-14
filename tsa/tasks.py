@@ -81,21 +81,6 @@ def index(g, analyzer, redis_cfg):
 
 
 @celery.task
-@environment('REDIS')
-def analyze_upload(key, mime, etl, redis_cfg):
-    log = logging.getLogger(__name__)
-    r = redis.StrictRedis.from_url(redis_cfg)
-    if r.strlen(key) < 1024 * 1024:  # approx 1MB
-        g = rdflib.ConjunctiveGraph()
-        g.parse(data=r.get(key), format=mime)
-        a = Analyzer()
-        return a.analyze(g)
-    else:
-        log.warn(f"Not analyzing an upload as it's too big: {key!s}")
-        r.delete(key)
-
-
-@celery.task
 def inspect(iri):
     g = rdflib.ConjunctiveGraph()
     g.parse(iri)

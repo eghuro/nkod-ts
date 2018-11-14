@@ -52,37 +52,6 @@ def api_analyze_iri():
         abort(400)
 
 
-@blueprint.route('/api/v1/analyze', methods=['POST'])
-@environment('REDIS')
-def api_analyze_upload(redis_url):
-    etl = bool(int(request.args.get('etl', 1)))
-
-    def read_in_chunks(file_object, chunk_size=1024):
-        """Lazy function (generator) to read a file piece by piece.
-
-        Default chunk size: 1k.
-        """
-        while True:
-            data = file_object.read(chunk_size)
-            if not data:
-                break
-            yield data
-
-    keys = []
-    mimes = []
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    for file in request.files:
-        key = str(uuid.uuid4())
-        keys.append(key)
-        mimes.append(file.mimetype)
-        for piece in read_in_chunks(file):
-            r.append(key, piece)
-        r.expire(key, 60)
-
-    g = group(analyze_upload.s(k, m, etl) for k, m in zip(keys, mimes))
-    return jsonify(g.apply_async().get())
-
-
 @blueprint.route('/api/v1/query/dataset')
 @environment('REDIS')
 def ds_index(redis_url):
