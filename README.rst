@@ -8,10 +8,20 @@ Time series analysis service for NKOD.
 Build & run with Docker
 ----------
 
+For NKOD-TS service only:
+
 .. code-block:: bash
 
     docker build . -t nkod-ts
     docker run -p 80:8000 --name nkod-ts nkod-ts
+
+For the full environment, build ETL_ first as ``lp-etl`` and then use docker-compose:
+
+.. code-block:: bash
+
+    docker-compose up --build
+    
+.. _ETL: https://github.com/eghuro/etl/tree/docker
 
 Build & run manually
 ----------
