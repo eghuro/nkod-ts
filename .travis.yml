@@ -4,9 +4,6 @@ language: python
 env:
 - FLASK_APP=autoapp.py FLASK_DEBUG=1
 python:
-  - 2.7
-  - 3.4
-  - 3.5
   - 3.6
 #  - 3.7
 services:
@@ -31,4 +28,4 @@ deploy:
    - docker tag $REPO:$COMMIT $REPO:travis-$TRAVIS_BUILD_NUMBER
    - docker push USER/REPO
   on:
-    branch: master
+    branch: release
