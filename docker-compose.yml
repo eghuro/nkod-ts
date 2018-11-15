@@ -35,6 +35,6 @@ services:
     volumes:
       - ./data/virtuoso:/data
   etl:
-    image: "lp-etl"
+    image: linkedpipes/etl
     ports:
       - "8080:8080"
