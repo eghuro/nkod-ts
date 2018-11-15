@@ -9,7 +9,7 @@ from atenvironment import environment
 from celery import group
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
-from tsa.tasks import analyze, analyze_upload, hello, system_check
+from tsa.tasks import analyze, hello, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
