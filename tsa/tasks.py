@@ -17,6 +17,10 @@ from tsa.transformation import PipelineFactory
 @celery.task
 @environment('ETL', 'VIRTUOSO', 'REDIS')
 def system_check(etl, virtuoso, redis_url):
+    """Runs an availability test of additional systems.
+
+    Tested are: virtuoso, ETL, redis.
+    """
     log = logging.getLogger(__name__)
     log.info('System check started')
     log.info(f'Testing LP-ETL, URL: {etl!s}')
@@ -34,17 +38,19 @@ def system_check(etl, virtuoso, redis_url):
 
 @celery.task
 def hello():
+    """Dummy task returning hello world used for testing of Celery."""
     return 'Hello world!'
 
 
 @celery.task
 def analyze(iri, etl=True):
+    """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     log.info(f'Analyzing {iri!s}')
     if etl:
         (transform.s(iri) | poll.s() | inspect.s()).apply_async()
     else:
-        #TODO: split into sub-tasks: parse -> index | analyze
+        # TODO: split into sub-tasks: parse -> index | analyze
         guess = rdflib.util.guess_format(iri)
         if guess is None:
             r = requests.head(iri)
@@ -61,36 +67,45 @@ def analyze(iri, etl=True):
 
 @environment('REDIS')
 def index(g, analyzer, redis_cfg):
+    """Index related resources."""
     log = logging.getLogger(__name__)
     r = redis.StrictRedis.from_url(redis_cfg)
     pipe = r.pipeline()
     exp = 60 * 60  # 1H
 
-    log.info("Indexing ...")
+    log.info('Indexing ...')
     cnt = 0
     for ds, key in analyzer.find_relation(g):
         log.info(f'Related: {ds} - {key}')
-        pipe.sadd("related:"+key, ds)
-        pipe.sadd("key:"+ds, key)
-        pipe.sadd("ds:"+analyzer.distribution, ds)
-        pipe.sadd("distr:"+ds, analyzer.distribution)
+        pipe.sadd(f'related:{key}', ds)
+        pipe.sadd(f'key:{ds}', key)
+        pipe.sadd(f'ds:{analyzer.distribution}', ds)
+        pipe.sadd(f'distr:{ds}', analyzer.distribution)
+
+        pipe.expire(f'related:{key}', exp)
+        pipe.expire(f'key:{ds}', exp)
+        pipe.expire(f'ds:{analyzer.distribution}', exp)
+        pipe.expire(f'distr:{ds}', exp)
 
         cnt = cnt + 6
     pipe.execute()
-    log.info("Indexed " + str(cnt) + " records")
+    log.info(f'Indexed {cnt!s} records')
 
 
 @celery.task
 def inspect(iri):
+    """Run an analysis of an RDF graph under given IRI."""
     g = rdflib.ConjunctiveGraph()
     g.parse(iri)
     a = Analyzer()
+    index(g, a)
     return a.analyze(g)
 
 
 @celery.task
 @environment('ETL', 'VIRTUOSO', 'DBA_PASSWORD')
 def transform(iri, etl, virtuoso, dba_pass):
+    """Start a transformation of an RDF distribution using LP-ETL."""
     log = logging.getLogger(__name__)
     # create pipeline and call to start executions
     # prepare JSON-LD pipeline
@@ -125,6 +140,7 @@ def transform(iri, etl, virtuoso, dba_pass):
 
 @celery.task(bind=True, retry_backoff=True, max_retries=None, default_retry_delay=30, time_limit=60 * 60)
 def poll(self, iri):
+    """Poll for LP-ETL job to finish."""
     def after_return(self, status, retval, task_id, args, kwargs, einfo):
         cleanup.apply_async()
     self.after_return = after_return
@@ -161,6 +177,7 @@ def poll(self, iri):
 @celery.task
 @environment('ETL')
 def cleanup(iri, etl):
+    """Cleanup job for LP-ETL."""
     log = logging.getLogger(__name__)
     log.info(f'Deleting {iri!s}')
 
@@ -171,8 +188,12 @@ def cleanup(iri, etl):
 
 
 class EtlError(Exception):
+    """Generic error returned by LP-ETL."""
+
     pass
 
 
 class EtlJobFailed(EtlError):
+    """LP-ETL job failed."""
+
     pass
