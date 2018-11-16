@@ -63,26 +63,30 @@ class Analyzer(object):
 
         datasets = defaultdict(QbDataset)
 
-        qb = Namespace('http://purl.org/linked-data/cube#')
-
         for s, p, o in graph:
             predicates_count[p] = predicates_count[p] + 1
             if p == RDF.type:
                 classes.add(o)
 
-        for dataset in graph.subjects(RDF.type, qb.DataSet):
-            for structure in graph.objects(dataset, qb.structure):
-                for component in graph.objects(structure, qb.component):
-                    for dimension in graph.objects(component, qb.dimension):
+        for dataset in graph.subjects(RDF.type, Analyzer.qb.DataSet):
+            for structure in graph.objects(dataset, Analyzer.qb.structure):
+                for component in graph.objects(structure, Analyzer.qb.component):
+                    for dimension in graph.objects(component, Analyzer.qb.dimension):
                         datasets[str(dataset)].dimensions.add(str(dimension))
-                    for measure in graph.objects(component, qb.measure):
+                    for measure in graph.objects(component, Analyzer.qb.measure):
                         datasets[str(dataset)].measures.add(str(measure))
+
+        d = {}
+        for k in datasets.keys():
+            d[k] = {}
+            d[k]['dimensions'] = list(datasets[k].dimensions)
+            d[k]['measures'] = list(datasets[k].measures)
 
         summary = {
             'triples': triples,
             'predicates': predicates_count,
             'classes': list(classes),
-            'datasets': str(datasets)
+            'datasets': d
         }
 
         return summary
@@ -98,14 +102,3 @@ class QbDataset(object):
         """Init model by initializing sets."""
         self.dimensions = set()
         self.measures = set()
-
-    def __repr__(self):
-        """Return string representation of a model."""
-        return str({
-            'dimensions': list(self.dimensions),
-            'measures': list(self.measures)
-        })
-
-    def __str__(self):
-        """Return string representation of a model."""
-        return self.__repr__()
