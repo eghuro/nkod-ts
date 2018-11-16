@@ -19,15 +19,15 @@ class Config(object):
     CACHE_TYPE = 'redis'  # Can be "memcached", "redis", etc.
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WEBPACK_MANIFEST_PATH = 'webpack/manifest.json'
-    CELERY_BROKER_URL = os.environ.get('REDIS', 'redis://redis:6379/0')
-    CELERY_RESULT_BACKEND = os.environ.get('REDIS', 'redis://redis:6379/0')
+    CELERY_BROKER_URL = os.environ['REDIS']
+    CELERY_RESULT_BACKEND = os.environ['REDIS']
     REDIS_HOST = 'redis'
     REDIS_PORT = 6379
     REDIS_DB = 0
     CACHE_KEY_PREFIX = 'fcache'
     CACHE_REDIS_HOST = 'redis'
     CACHE_REDIS_PORT = '6379'
-    CACHE_REDIS_URL = os.environ.get('REDIS', 'redis://redis:6379/0')
+    CACHE_REDIS_URL = os.environ['REDIS']
     SENTRY_CONFIG = {
         'dsn': 'https://9df1f926d1854fa4884d1f0ce9489a0b@sentry.io/1304923',
         'release': RELEASE,
