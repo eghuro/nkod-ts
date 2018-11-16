@@ -2,12 +2,14 @@
 """Public section, including homepage and signup."""
 import logging
 
+import json
 import redis
 import rfc3987
 from atenvironment import environment
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
-from tsa.tasks import analyze, hello, system_check
+from tsa.cache import cached
+from tsa.tasks import analyze, hello, system_check, index_query
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -41,44 +43,44 @@ def test_system():
 
 
 @blueprint.route('/api/v1/analyze', methods=['GET'])
+@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 def api_analyze_iri():
     """Analyze a distribution."""
     iri = request.args.get('iri', None)
     etl = bool(int(request.args.get('etl', 0)))
 
     current_app.logger.info(f'ETL:{etl!s}')
+    if etl:  # FIXME: ETL not used at the moment
+        current_app.logger.warn('Request to use ETL is currently ignored!')
 
     if rfc3987.match(iri):
-        return jsonify(analyze.delay(iri, etl).get())
+        t = analyze.delay(iri, etl)
+        return jsonify([v for v in t.collect()][1][1][1])
+        # TODO: switch to trigger - status - fetch result model
     else:
         abort(400)
 
 
 @blueprint.route('/api/v1/query/dataset')
+@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
 def ds_index(redis_url):
     """Query a datacube dataset."""
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     iri = request.args.get('iri', None)
     current_app.logger.info(f'Querying dataset for: {iri}')
+
+    result_key = f'query:{iri}'
+    current_app.logger.info(f'Result key: {result_key}')
+
     if rfc3987.match(iri):
         if not r.exists(f'key:{iri}'):
             abort(404)
-        else:
-            all_ds = set()
-            d = dict()
-            for key in r.smembers(f'key:{iri}'):
-                related = set(r.smembers(f'related:{key}'))
-                current_app.logger.info(f'Related datasets: {related!s}')
-                all_ds.update(related)
-                current_app.logger.info(f'All DS: {all_ds!s}')
-                related.discard(iri)
-                if len(related) > 0:
-                    d[key] = list(related)
-            e = dict()
-            for ds in all_ds:
-                e[ds] = list(r.smembers(f'distr:{ds}'))
-            return jsonify({'related': d, 'distribution': e})
+        elif not r.exists(result_key):
+            current_app.logger.info(f'Constructing result')
+            index_query.s(iri).apply_async().get()
+        current_app.logger.info(f'Return result from redis')
+        return jsonify(json.loads(r.get(result_key)))
     else:
         abort(400)
 

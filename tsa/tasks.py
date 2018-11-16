@@ -1,6 +1,7 @@
 """Celery tasks invoked from the API endpoints."""
 import json
 import logging
+import uuid
 from urllib.parse import urlparse
 
 import rdflib
@@ -8,10 +9,10 @@ import redis
 import requests
 from atenvironment import environment
 from rdflib import URIRef
+from celery import group
 
 from tsa.analyzer import Analyzer
 from tsa.celery import celery
-from tsa.transformation import PipelineFactory
 
 
 @celery.task
@@ -47,32 +48,43 @@ def analyze(iri, etl=True):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     log.info(f'Analyzing {iri!s}')
-    if etl:
-        (transform.s(iri) | poll.s() | inspect.s()).apply_async()
-    else:
-        # TODO: split into sub-tasks: parse -> index | analyze
-        guess = rdflib.util.guess_format(iri)
-        if guess is None:
-            r = requests.head(iri)
-            r.raise_for_status()
-            guess = r.headers.get('content-type')
-        g = rdflib.ConjunctiveGraph()
-        log.info(f'Guessing format to be {guess!s}')
-        g.parse(iri, format=guess)
+    guess = rdflib.util.guess_format(iri)
+    if guess is None:
+        r = requests.head(iri)
+        r.raise_for_status()
+        guess = r.headers.get('content-type')
+    g = rdflib.ConjunctiveGraph()
+    log.info(f'Guessing format to be {guess!s}')
 
-        a = Analyzer(iri)
-        index(g, a)
-        return a.analyze(g)
+    return group(index.si(iri, guess), run_analyzer.si(iri, guess))()
 
+@celery.task(serializer='json')
+def run_analyzer(iri, format_guess):
+    """Actually run the analyzer."""
+    log = logging.getLogger(__name__)
 
+    log.debug("Parsing graph")
+    g = rdflib.ConjunctiveGraph()
+    g.parse(iri, format=format_guess)
+
+    a = Analyzer(iri)
+    return a.analyze(g)
+
+@celery.task
 @environment('REDIS')
-def index(g, analyzer, redis_cfg):
+def index(iri, format_guess, redis_cfg):
     """Index related resources."""
     log = logging.getLogger(__name__)
+
+    log.debug("Parsing graph")
+    g = rdflib.ConjunctiveGraph()
+    g.parse(iri, format=format_guess)
+
     r = redis.StrictRedis.from_url(redis_cfg)
     pipe = r.pipeline()
     exp = 60 * 60  # 1H
 
+    analyzer = Analyzer(iri)
     log.info('Indexing ...')
     cnt = 0
     for ds, key in analyzer.find_relation(g):
@@ -90,110 +102,33 @@ def index(g, analyzer, redis_cfg):
         cnt = cnt + 6
     pipe.execute()
     log.info(f'Indexed {cnt!s} records')
-
-
-@celery.task
-def inspect(iri):
-    """Run an analysis of an RDF graph under given IRI."""
-    g = rdflib.ConjunctiveGraph()
-    g.parse(iri)
-    a = Analyzer()
-    index(g, a)
-    return a.analyze(g)
-
+    return cnt
 
 @celery.task
-@environment('ETL', 'VIRTUOSO', 'DBA_PASSWORD')
-def transform(iri, etl, virtuoso, dba_pass):
-    """Start a transformation of an RDF distribution using LP-ETL."""
-    log = logging.getLogger(__name__)
-    # create pipeline and call to start executions
-    # prepare JSON-LD pipeline
-
-    log.info(f'Prepare pipeline for {iri!s}')
-    pf = PipelineFactory()
-    p = urlparse(virtuoso)
-    pipeline = json.dumps(pf.create_pipeline(iri, {'server': p.hostname,
-                                                   'port': 1111,
-                                                   'user': 'dba',
-                                                   'password': dba_pass,
-                                                   'iri': iri}))
-
-    log.info(f'Pipeline:\n{pipeline!s}')
-
-    # create the pipeline
-    r = requests.post(f'{etl!s}/resources/pipelines', files={'pipeline': pipeline})
-    r.raise_for_status()
-
-    g = rdflib.ConjunctiveGraph()
-    g.parse(data=r.text, format='trig')
-
-    pipeline = g.value(object=URIRef('http://linkedpipes.com/ontology/Pipeline'), predicate=rdflib.namespace.RDF.type)
-    log.info(f'Pipeline IRI: {pipeline!s}')
-
-    # POST /resources/executions
-    r = requests.post(f'{etl!s}/resources/executions?pipeline={pipeline}')
-    r.raise_for_status()
-    log.info(f'Execution trigger result:\n{r.json()!s}')
-    return f"{etl!s}/resources/executions/{r.json()['iri'].split('/')[-1]}"
-
-
-@celery.task(bind=True, retry_backoff=True, max_retries=None, default_retry_delay=30, time_limit=60 * 60)
-def poll(self, iri):
-    """Poll for LP-ETL job to finish."""
-    def after_return(self, status, retval, task_id, args, kwargs, einfo):
-        cleanup.apply_async()
-    self.after_return = after_return
+@environment('REDIS')
+def index_query(iri, redis_url):
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
 
     log = logging.getLogger(__name__)
-    log.info(f'Polling {iri!s}')
 
-    r = requests.get(iri + '/overview')
-    content = r.text
-    log.info(content)
-    r.raise_for_status()
+    all_ds = set()
+    d = dict()
+    for key in r.smembers(f'key:{iri}'):
+        related = set(r.smembers(f'related:{key}'))
+        log.info(f'Related datasets: {related!s}')
+        all_ds.update(related)
+        log.info(f'All DS: {all_ds!s}')
+        related.discard(iri)
+        if len(related) > 0:
+            d[key] = list(related)
+    e = dict()
+    for ds in all_ds:
+        e[ds] = list(r.smembers(f'distr:{ds}'))
 
-    j = json.loads(content)
-    if j['status']['@id'] == 'http://etl.linkedpipes.com/resources/status/failed':
-        log.error('Execution failed')
-
-        try:
-            r = requests.get(iri + '/logs')
-            r.raise_for_status()
-            log.error('ETL log:\n' + r.text)
-        except requests.HTTPError as e:
-            raise EtlJobFailed(r) from e
-
-        raise EtlJobFailed(r)
-    elif not (j['status']['@id'] == 'http://etl.linkedpipes.com/resources/status/finished'):
-        log.info('Execution is not finished yet')
-        self.retry()
-    else:
-        # get result uri
-        result = ''
-        return result
-
-
-@celery.task
-@environment('ETL')
-def cleanup(iri, etl):
-    """Cleanup job for LP-ETL."""
-    log = logging.getLogger(__name__)
-    log.info(f'Deleting {iri!s}')
-
-    r = requests.delete(f'{etl!s}/pipelines?iri={iri!s}')
-    r.raise_for_status()
-
-    log.info(f'Pipeline {iri!s} deleted')
-
-
-class EtlError(Exception):
-    """Generic error returned by LP-ETL."""
-
-    pass
-
-
-class EtlJobFailed(EtlError):
-    """LP-ETL job failed."""
-
-    pass
+    exp = 60 * 60  # 1H
+    key = f'query:{iri}'
+    with r.pipeline() as pipe:
+        pipe.set(key, json.dumps({'related': d, 'distribution': e}))
+        pipe.expire(key, exp)
+        pipe.execute()
+    log.info(f'Calculated result stored under {key}')
