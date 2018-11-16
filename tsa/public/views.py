@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """Public section, including homepage and signup."""
+import json
 import logging
 
-import json
 import redis
 import rfc3987
 from atenvironment import environment
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
 from tsa.cache import cached
-from tsa.tasks import analyze, hello, system_check, index_query
+from tsa.tasks import analyze, hello, index_query, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 

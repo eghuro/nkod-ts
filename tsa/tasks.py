@@ -1,14 +1,11 @@
 """Celery tasks invoked from the API endpoints."""
 import json
 import logging
-import uuid
-from urllib.parse import urlparse
 
 import rdflib
 import redis
 import requests
 from atenvironment import environment
-from rdflib import URIRef
 from celery import group
 
 from tsa.analyzer import Analyzer
@@ -53,22 +50,23 @@ def analyze(iri, etl=True):
         r = requests.head(iri)
         r.raise_for_status()
         guess = r.headers.get('content-type')
-    g = rdflib.ConjunctiveGraph()
     log.info(f'Guessing format to be {guess!s}')
 
     return group(index.si(iri, guess), run_analyzer.si(iri, guess))()
+
 
 @celery.task(serializer='json')
 def run_analyzer(iri, format_guess):
     """Actually run the analyzer."""
     log = logging.getLogger(__name__)
 
-    log.debug("Parsing graph")
+    log.debug('Parsing graph')
     g = rdflib.ConjunctiveGraph()
     g.parse(iri, format=format_guess)
 
     a = Analyzer(iri)
     return a.analyze(g)
+
 
 @celery.task
 @environment('REDIS')
@@ -76,7 +74,7 @@ def index(iri, format_guess, redis_cfg):
     """Index related resources."""
     log = logging.getLogger(__name__)
 
-    log.debug("Parsing graph")
+    log.debug('Parsing graph')
     g = rdflib.ConjunctiveGraph()
     g.parse(iri, format=format_guess)
 
@@ -104,9 +102,14 @@ def index(iri, format_guess, redis_cfg):
     log.info(f'Indexed {cnt!s} records')
     return cnt
 
+
 @celery.task
 @environment('REDIS')
 def index_query(iri, redis_url):
+    """Query the index and construct related datasets for the iri.
+
+    Final result is stored in redis.
+    """
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
 
     log = logging.getLogger(__name__)
