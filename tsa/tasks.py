@@ -61,11 +61,15 @@ def run_analyzer(iri, format_guess):
     log = logging.getLogger(__name__)
 
     log.debug('Parsing graph')
-    g = rdflib.ConjunctiveGraph()
-    g.parse(iri, format=format_guess)
+    try:
+        g = rdflib.ConjunctiveGraph()
+        g.parse(iri, format=format_guess)
 
-    a = Analyzer(iri)
-    return a.analyze(g)
+        a = Analyzer(iri)
+        return a.analyze(g)
+    except rdflib.plugin.PluginException:
+        log.debug("Failed to parse graph")
+        return {}
 
 
 @celery.task
@@ -75,8 +79,12 @@ def index(iri, format_guess, redis_cfg):
     log = logging.getLogger(__name__)
 
     log.debug('Parsing graph')
-    g = rdflib.ConjunctiveGraph()
-    g.parse(iri, format=format_guess)
+    try:
+        g = rdflib.ConjunctiveGraph()
+        g.parse(iri, format=format_guess)
+    except rdflib.plugin.PluginException:
+        log.debug("Failed to parse graph")
+        return 0
 
     r = redis.StrictRedis.from_url(redis_cfg)
     pipe = r.pipeline()
@@ -135,3 +143,22 @@ def index_query(iri, redis_url):
         pipe.expire(key, exp)
         pipe.execute()
     log.info(f'Calculated result stored under {key}')
+
+@celery.task
+@environment('REDIS')
+def index_distribution_query(iri, redis_url):
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+
+    related = set()
+    for ds in r.smembers(f'ds:{iri}'):
+        for key in r.smembers(f'key:{ds}'):
+            related.update(r.smembers(f'related:{key}'))
+    for ds in r.smembers(f'ds:{iri}'):
+        related.discard(ds)
+
+    exp = 60 * 60  # 1H
+    key = f'distrquery:{iri}'
+    with r.pipeline() as pipe:
+        pipe.set(key, json.dumps(list(related)))
+        pipe.expire(key, exp)
+        pipe.execute()

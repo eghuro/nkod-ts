@@ -9,7 +9,7 @@ from atenvironment import environment
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 
 from tsa.cache import cached
-from tsa.tasks import analyze, hello, index_query, system_check
+from tsa.tasks import analyze, hello, index_query, index_distribution_query, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -46,9 +46,11 @@ def test_system():
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 def api_analyze_iri():
     """Analyze a distribution."""
+
     iri = request.args.get('iri', None)
     etl = bool(int(request.args.get('etl', 0)))
 
+    current_app.logger.info(f'Analyzing distribution for: {iri}')
     current_app.logger.info(f'ETL:{etl!s}')
     if etl:  # FIXME: ETL not used at the moment
         current_app.logger.warn('Request to use ETL is currently ignored!')
@@ -86,6 +88,7 @@ def ds_index(redis_url):
 
 
 @blueprint.route('/api/v1/query/distribution')
+#@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
 def distr_index(redis_url):
     """Query an RDF distribution sumbitted for analysis."""
@@ -96,6 +99,7 @@ def distr_index(redis_url):
         if not r.exists(f'ds:{iri}'):
             abort(404)
         else:
-            return jsonify(list(r.smembers('ds:{iri}')))
+            index_distribution_query.s(iri).apply_async().get()
+            return jsonify(json.loads(r.get(f'distrquery:{iri}')))
     else:
         abort(400)
