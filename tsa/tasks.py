@@ -21,12 +21,12 @@ def system_check(etl, virtuoso, redis_url):
     """
     log = logging.getLogger(__name__)
     log.info('System check started')
-    log.info(f'Testing LP-ETL, URL: {etl!s}')
-    requests.get(etl).raise_for_status()
+    #log.info(f'Testing LP-ETL, URL: {etl!s}')
+    #requests.get(etl).raise_for_status()
 
-    virtuoso_url = f'{virtuoso!s}/sparql'
-    log.info(f'Testing virtuoso, URL: {virtuoso_url}')
-    requests.get(virtuoso_url).raise_for_status()
+    #virtuoso_url = f'{virtuoso!s}/sparql'
+    #log.info(f'Testing virtuoso, URL: {virtuoso_url}')
+    #requests.get(virtuoso_url).raise_for_status()
 
     log.info(f'Testing redis, URL: {redis_url}')
     r = redis.StrictRedis().from_url(redis_url)
