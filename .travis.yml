@@ -10,7 +10,7 @@ python:
   - 3.7-dev
   - 3.8-dev
   - nightly
-  - pypy35
+  - pypy3.5
 services:
   - docker
 install:
