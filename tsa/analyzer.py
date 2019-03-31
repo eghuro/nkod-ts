@@ -92,6 +92,10 @@ class Analyzer(object):
         return summary
 
 
+class SparqlEndpointAnalyzer(object):
+    pass
+
+
 class QbDataset(object):
     """Model for reporting DataCube dataset.
 

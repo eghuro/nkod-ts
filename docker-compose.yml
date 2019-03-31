@@ -10,6 +10,8 @@ services:
       - celery
   redis:
     image: "redis:alpine"
+    ports:
+      - "6379:6379"
   celery:
     build: .
     environment:

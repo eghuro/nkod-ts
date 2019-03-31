@@ -41,29 +41,57 @@ def hello():
 
 
 @celery.task
-def analyze(iri, etl=True):
+@environment('REDIS')
+def analyze(iri, etl, redis_url):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     log.info(f'Analyzing {iri!s}')
     guess = rdflib.util.guess_format(iri)
-    if guess is None:
-        r = requests.head(iri)
-        r.raise_for_status()
-        guess = r.headers.get('content-type')
-    log.info(f'Guessing format to be {guess!s}')
 
-    return group(index.si(iri, guess), run_analyzer.si(iri, guess))()
+    try:
+        r = requests.get(iri, verify=False, stream=True)
+        r.raise_for_status()
+
+        conlen = int(r.headers.get('Content-Length'))
+        if conlen > 1024 * 1024 * 1024:
+            log.error(f'Skipping as distribution file is too large: {conlen!s}')
+            return {}
+
+        if guess is None:
+            guess = r.headers.get('content-type')
+        log.info(f'Guessing format to be {guess!s}')
+
+        key = f'data:{iri!s}'
+        red = redis.StrictRedis().from_url(redis_url)
+        if not red.exists(key):
+            chsize  = 1024
+            for chunk in r.iter_content(chunk_size=chsize):
+                if chunk:
+                    red.append(key, chunk)
+            red.expire(key, 10)
+
+        return group(index.si(iri, guess), run_analyzer.si(iri, guess))()
+    except:
+        log.exception(f'Failed to get {iri!s}')
+        return {}
+
+
+
+
 
 
 @celery.task(serializer='json')
-def run_analyzer(iri, format_guess):
+@environment('REDIS')
+def run_analyzer(iri, format_guess, redis_cfg):
     """Actually run the analyzer."""
     log = logging.getLogger(__name__)
 
+    red = redis.StrictRedis().from_url(redis_cfg)
+    key = f'data:{iri!s}'
     log.debug('Parsing graph')
     try:
         g = rdflib.ConjunctiveGraph()
-        g.parse(iri, format=format_guess)
+        g.parse(data=red.get(key), format=format_guess)
 
         a = Analyzer(iri)
         return a.analyze(g)
@@ -77,16 +105,17 @@ def run_analyzer(iri, format_guess):
 def index(iri, format_guess, redis_cfg):
     """Index related resources."""
     log = logging.getLogger(__name__)
+    r = redis.StrictRedis.from_url(redis_cfg)
+    key = f'data:{iri!s}'
 
     log.debug('Parsing graph')
     try:
         g = rdflib.ConjunctiveGraph()
-        g.parse(iri, format=format_guess)
+        g.parse(data=r.get(key), format=format_guess)
     except rdflib.plugin.PluginException:
         log.debug("Failed to parse graph")
         return 0
 
-    r = redis.StrictRedis.from_url(redis_cfg)
     pipe = r.pipeline()
     exp = 60 * 60  # 1H
 
