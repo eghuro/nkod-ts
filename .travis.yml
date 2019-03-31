@@ -21,7 +21,6 @@ install:
 script:
   - flask test
 before_script:
-  - npm run build
   - flask lint
 deploy:
   provider: script

@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "description": "Time series analysis for NKOD.",
   "scripts": {
-    "build": "NODE_ENV=production webpack --progress --colors -p",
     "start-dev": "npm run flask-server",
     "start": "npm run build; npm run flask-prod",
     "flask-server": "FLASK_APP=$PWD/autoapp.py FLASK_DEBUG=1 flask run",
