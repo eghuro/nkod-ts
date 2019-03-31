@@ -1,9 +1,8 @@
-FROM python:3.7-alpine
+FROM python:3.6-alpine
 COPY requirements.txt .
 RUN apk add gcc musl-dev python3-dev libffi-dev openssl-dev && pip install -r requirements.txt && rm -rf /root/.cache && apk del gcc musl-dev python3-dev libffi-dev openssl-dev
-RUN apk add --update nodejs nodejs-npm
 
 COPY . .
 
-CMD npm start
+CMD gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
 EXPOSE 8000

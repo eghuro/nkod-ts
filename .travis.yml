@@ -6,10 +6,6 @@ env:
 - FLASK_APP=autoapp.py FLASK_DEBUG=1 REDIS=redis://foo
 python:
   - 3.6
-  - 3.7
-  - 3.7-dev
-  - 3.8-dev
-  - nightly
   - pypy3.5
 services:
   - docker
