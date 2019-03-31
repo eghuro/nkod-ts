@@ -15,13 +15,10 @@ services:
   - docker
 install:
   - pip install -r requirements.txt
-  - nvm install 6.10
-  - nvm use 6.10
-  - npm install
 script:
   - flask test
-before_script:
-  - flask lint
+#before_script:
+#  - flask lint
 deploy:
   provider: script
   script:
