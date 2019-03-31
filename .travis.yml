@@ -1,11 +1,16 @@
 # Config file for automatic testing at travis-ci.org
 sudo: false  # http://docs.travis-ci.com/user/migrating-from-legacy/
+dist: xenial
 language: python
 env:
-- FLASK_APP=autoapp.py FLASK_DEBUG=1 REDIS=foo
+- FLASK_APP=autoapp.py FLASK_DEBUG=1 REDIS=redis://foo
 python:
   - 3.6
-#  - 3.7
+  - 3.7
+  - 3.7-dev
+  - 3.8-dev
+  - nightly
+  - pypy3
 services:
   - docker
 install:

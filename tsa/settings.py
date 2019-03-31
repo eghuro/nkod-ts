@@ -21,11 +21,11 @@ class Config(object):
     WEBPACK_MANIFEST_PATH = 'webpack/manifest.json'
     CELERY_BROKER_URL = os.environ['REDIS']
     CELERY_RESULT_BACKEND = os.environ['REDIS']
-    REDIS_HOST = 'redis'
+    REDIS_HOST = 'redis://redis'
     REDIS_PORT = 6379
     REDIS_DB = 0
     CACHE_KEY_PREFIX = 'fcache'
-    CACHE_REDIS_HOST = 'redis'
+    CACHE_REDIS_HOST = 'redis://redis'
     CACHE_REDIS_PORT = '6379'
     CACHE_REDIS_URL = os.environ['REDIS']
     SENTRY_CONFIG = {
