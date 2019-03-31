@@ -13,13 +13,6 @@ from tsa.tasks import analyze, hello, index_distribution_query, index_query, sys
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
-
-@blueprint.route('/', methods=['GET'])
-def home():
-    """Landing page."""
-    return render_template('public/landing.html')
-
-
 @blueprint.route('/api/v1/test/base')
 def test_basic():
     """Basic test returning hello world."""
