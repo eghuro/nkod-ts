@@ -47,14 +47,6 @@ In general, before running shell commands, set the ``FLASK_APP`` and
     export FLASK_APP=autoapp.py
     export FLASK_DEBUG=1
 
-Once you have installed your DBMS, run the following to create your app's
-database tables and perform the initial migration ::
-
-    flask db init
-    flask db migrate
-    flask db upgrade
-    npm start
-
 
 Deployment
 ----------
@@ -84,19 +76,3 @@ Running Tests
 To run all tests, run ::
 
     flask test
-
-
-Migrations
-----------
-
-Whenever a database migration needs to be made. Run the following commands ::
-
-    flask db migrate
-
-This will generate a new migration script. Then run ::
-
-    flask db upgrade
-
-To apply the migration.
-
-For a full migration command reference, run ``flask db --help``.

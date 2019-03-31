@@ -6,12 +6,13 @@ import logging
 import redis
 import rfc3987
 from atenvironment import environment
-from flask import Blueprint, abort, current_app, jsonify, render_template, request
+from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
 from tsa.tasks import analyze, hello, index_distribution_query, index_query, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
+
 
 @blueprint.route('/api/v1/test/base')
 def test_basic():

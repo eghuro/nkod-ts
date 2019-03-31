@@ -13,12 +13,9 @@ class Config(object):
     APP_DIR = os.path.abspath(os.path.dirname(__file__))  # This directory
     PROJECT_ROOT = os.path.abspath(os.path.join(APP_DIR, os.pardir))
     RELEASE = raven.fetch_git_sha(PROJECT_ROOT)
-    BCRYPT_LOG_ROUNDS = 13
     DEBUG_TB_ENABLED = False  # Disable Debug toolbar
     DEBUG_TB_INTERCEPT_REDIRECTS = False
     CACHE_TYPE = 'redis'  # Can be "memcached", "redis", etc.
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    WEBPACK_MANIFEST_PATH = 'webpack/manifest.json'
     CELERY_BROKER_URL = os.environ['REDIS']
     CELERY_RESULT_BACKEND = os.environ['REDIS']
     REDIS_HOST = 'redis://redis'
@@ -39,7 +36,6 @@ class ProdConfig(Config):
 
     ENV = 'prod'
     DEBUG = False
-    SQLALCHEMY_DATABASE_URI = 'postgresql://alex@localhost/nkod'
     DEBUG_TB_ENABLED = False  # Disable Debug toolbar
 
 
@@ -48,10 +44,6 @@ class DevConfig(Config):
 
     ENV = 'dev'
     DEBUG = True
-    DB_NAME = 'dev.db'
-    # Put the db file in project root
-    DB_PATH = os.path.join(Config.PROJECT_ROOT, DB_NAME)
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///{0}'.format(DB_PATH)
     DEBUG_TB_ENABLED = True
     CACHE_TYPE = 'simple'  # Can be "memcached", "redis", etc.
 
@@ -61,6 +53,3 @@ class TestConfig(Config):
 
     TESTING = True
     DEBUG = True
-    SQLALCHEMY_DATABASE_URI = 'sqlite://'
-    BCRYPT_LOG_ROUNDS = 4  # For faster tests; needs at least 4 to avoid "ValueError: Invalid rounds"
-    WTF_CSRF_ENABLED = False  # Allows form testing

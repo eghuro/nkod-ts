@@ -6,7 +6,7 @@ import logging
 from flask import Flask, g, render_template
 
 from tsa import commands, public
-from tsa.extensions import bcrypt, cache, cors, db, debug_toolbar, migrate, sentry
+from tsa.extensions import cache, cors, debug_toolbar, sentry
 from tsa.settings import ProdConfig
 
 
@@ -29,12 +29,9 @@ def create_app(config_object=ProdConfig):
 
 def register_extensions(app):
     """Register Flask extensions."""
-    bcrypt.init_app(app)
     cache.init_app(app)
     cors.init_app(app)
-    db.init_app(app)
     debug_toolbar.init_app(app)
-    migrate.init_app(app, db)
     sentry.init_app(app, logging=True, level=logging.ERROR)
     return None
 
@@ -64,8 +61,7 @@ def register_shellcontext(app):
     """Register shell context objects."""
     def shell_context():
         """Shell context objects."""
-        return {
-            'db': db}
+        return {}
 
     app.shell_context_processor(shell_context)
 
