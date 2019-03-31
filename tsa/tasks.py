@@ -64,7 +64,7 @@ def analyze(iri, etl, redis_url):
         key = f'data:{iri!s}'
         red = redis.StrictRedis().from_url(redis_url)
         if not red.exists(key):
-            chsize  = 1024
+            chsize = 1024
             for chunk in r.iter_content(chunk_size=chsize):
                 if chunk:
                     red.append(key, chunk)
@@ -74,10 +74,6 @@ def analyze(iri, etl, redis_url):
     except:
         log.exception(f'Failed to get {iri!s}')
         return {}
-
-
-
-
 
 
 @celery.task(serializer='json')
@@ -96,7 +92,7 @@ def run_analyzer(iri, format_guess, redis_cfg):
         a = Analyzer(iri)
         return a.analyze(g)
     except rdflib.plugin.PluginException:
-        log.debug("Failed to parse graph")
+        log.debug('Failed to parse graph')
         return {}
 
 
@@ -113,7 +109,7 @@ def index(iri, format_guess, redis_cfg):
         g = rdflib.ConjunctiveGraph()
         g.parse(data=r.get(key), format=format_guess)
     except rdflib.plugin.PluginException:
-        log.debug("Failed to parse graph")
+        log.debug('Failed to parse graph')
         return 0
 
     pipe = r.pipeline()
@@ -172,6 +168,7 @@ def index_query(iri, redis_url):
         pipe.expire(key, exp)
         pipe.execute()
     log.info(f'Calculated result stored under {key}')
+
 
 @celery.task
 @environment('REDIS')
