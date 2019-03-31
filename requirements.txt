@@ -14,7 +14,7 @@ cffi==1.11.5
 chardet==3.0.4
 Click==7.0
 factory-boy==2.11.1
-Faker==0.9.2
+Faker==0.9.3
 flake8==3.5.0
 flake8-blind-except==0.1.1
 flake8-debugger==3.1.0
