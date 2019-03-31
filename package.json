@@ -4,10 +4,8 @@
   "version": "1.0.0",
   "description": "Time series analysis for NKOD.",
   "scripts": {
-    "start-dev": "npm run flask-server",
-    "start": "npm run build; npm run flask-prod",
-    "flask-server": "FLASK_APP=$PWD/autoapp.py FLASK_DEBUG=1 flask run",
-    "flask-prod": "gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app"
+    "start-dev": "FLASK_APP=$PWD/autoapp.py FLASK_DEBUG=1 flask run",
+    "start": "gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app"
   },
   "repository": {
     "type": "git",
