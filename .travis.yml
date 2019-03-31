@@ -5,9 +5,7 @@ language: python
 env:
 - FLASK_APP=autoapp.py FLASK_DEBUG=1 REDIS=redis://foo
 python:
-  - 3.5
   - 3.6
-  - pypy3.5
 services:
   - docker
 install:
