@@ -6,7 +6,7 @@ import logging
 from flask import Flask, g, render_template
 
 from tsa import commands, public
-from tsa.extensions import bcrypt, cache, cors, db, debug_toolbar, migrate, sentry, webpack
+from tsa.extensions import bcrypt, cache, cors, db, debug_toolbar, migrate, sentry
 from tsa.settings import ProdConfig
 
 
@@ -36,7 +36,6 @@ def register_extensions(app):
     debug_toolbar.init_app(app)
     migrate.init_app(app, db)
     sentry.init_app(app, logging=True, level=logging.ERROR)
-    webpack.init_app(app)
     return None
 
 
