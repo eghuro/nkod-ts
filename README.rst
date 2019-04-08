@@ -23,8 +23,7 @@ For the full environment use docker-compose:
     
 Build & run manually
 ----------
-
-Only Python 3.6 is supported, 3.7 and higher are not yet supported because of Celery. Support for 3.7+ is expected with Celery 4.3 release.
+CPython 3.6+ and PyPy 3.5 are supported
 
 First, set your app's secret key as an environment variable. For example,
 add the following to ``.bashrc`` or ``.bash_profile``.

@@ -10,6 +10,7 @@ from celery import group
 
 from tsa.analyzer import Analyzer
 from tsa.celery import celery
+from tsa.monitor import monitor
 
 
 @celery.task
@@ -59,6 +60,7 @@ def analyze(iri, etl, redis_url):
 
         if guess is None:
             guess = r.headers.get('content-type')
+        monitor.log_format(guess)
         log.info(f'Guessing format to be {guess!s}')
 
         key = f'data:{iri!s}'

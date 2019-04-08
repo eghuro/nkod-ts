@@ -20,6 +20,8 @@
     "url": "https://github.com/eghuro/crawlcheckio/issues"
   },
   "homepage": "https://github.com/eghuro/crawlcheckio#readme",
-  "dependencies": {},
+  "dependencies": {
+    "statsd": "^0.8.0"
+  },
   "devDependencies": {}
 }
