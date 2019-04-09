@@ -81,14 +81,14 @@ class Analyzer(object):
         """Basic graph analysis and basic analysis of a datacube."""
         triples = len(graph)
         predicates_count = defaultdict(int)
-        classes = set()
+        classes_count = defaultdict(int)
 
         datasets = defaultdict(QbDataset)
 
         for s, p, o in graph:
             predicates_count[p] = predicates_count[p] + 1
             if p == RDF.type:
-                classes.add(o)
+                classes_count[o] = classes_count[o] + 1
 
         for dataset in graph.subjects(RDF.type, Analyzer.qb.DataSet):
             for structure in graph.objects(dataset, Analyzer.qb.structure):
@@ -107,7 +107,7 @@ class Analyzer(object):
         summary = {
             'triples': triples,
             'predicates': predicates_count,
-            'classes': list(classes),
+            'classes': classes_count,
             'datasets': d
         }
 
