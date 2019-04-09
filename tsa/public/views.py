@@ -63,7 +63,7 @@ def api_analyze_iri():
 
     if rfc3987.match(iri):
         try:
-            t = analyze.delay(iri, etl)
+            t = analyze.delay(iri, etl, False)
             return {}
         except IndexError as e:
             current_app.logger.debug(e)
@@ -85,7 +85,16 @@ def api_analyze_endpoint():
 def api_analyze_catalog():
     """Analyze a catalog."""
     iri = request.args.get('iri', None)
-    pass
+    current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
+    if rfc3987.match(iri):
+        try:
+            t = analyze.delay(iri, False, True)
+            return {}
+        except IndexError as e:
+            current_app.logger.debug(e)
+            abort(400)
+    else:
+        abort(400)
 
 @blueprint.route('/api/v1/query/dataset')
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)

@@ -43,7 +43,7 @@ def hello():
 
 @celery.task
 @environment('REDIS')
-def analyze(iri, etl, redis_url):
+def analyze(iri, etl, catalog, redis_url):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     log.info(f'Analyzing {iri!s}')
@@ -78,7 +78,11 @@ def analyze(iri, etl, redis_url):
                     red.append(key, chunk)
             red.expire(key, 60*60)
 
-        group(index.si(iri, guess), run_analyzer.si(iri, guess)).delay()
+        if catalog:
+            pipeline = inspect_catalog.si(iri)
+        else:
+            pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
+        pipeline.delay()
         return {}
     except:
         log.warn(f'Failed to get {iri!s}')
@@ -200,3 +204,24 @@ def index_distribution_query(iri, redis_url):
         pipe.set(key, json.dumps(list(related)))
         pipe.expire(key, exp)
         pipe.execute()
+
+@celery.task
+@environment('REDIS')
+def inspect_catalog(iri, redis_cfg):
+    """Analyze DCAT datasets listed in the catalog."""
+    log = logging.getLogger(__name__)
+    r = redis.StrictRedis.from_url(redis_cfg)
+    key = f'data:{iri!s}'
+
+    log.debug('Parsing graph')
+    try:
+        g = rdflib.ConjunctiveGraph()
+        g.parse(data=r.get(key), format=format_guess)
+    except rdflib.plugin.PluginException:
+        log.debug('Failed to parse graph')
+        return 0
+
+    for distribution in g.subjects(RDF.type, rdflib.URIRef('http://www.w3.org/ns/dcat#Distribution')):
+        for access in g.objects(d, rdflib.URIRef('http://www.w3.org/ns/dcat#accessURL')):
+            log.debug(f'Scheduling analysis of {access!s}')
+            analyze.si(str(access), False, False).delay()
