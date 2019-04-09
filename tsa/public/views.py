@@ -35,26 +35,57 @@ def test_system():
     log.info(f'System check result: {x!s}')
     return str(x)
 
-
 @blueprint.route('/api/v1/analyze', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
+@environment('REDIS')
+def api_analyze_get(redis_url):
+    """Read analysis"""
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    iri = request.args.get('iri', None)
+    if rfc3987.match(iri):
+        key = f'analyze:{iri!s}'
+        if not r.exists(key):
+            abort(404)
+        else:
+            return jsonify(json.loads(r.get(key)))
+
+
+@blueprint.route('/api/v1/analyze/distribution', methods=['POST'])
 def api_analyze_iri():
     """Analyze a distribution."""
     iri = request.args.get('iri', None)
     etl = bool(int(request.args.get('etl', 0)))
 
     current_app.logger.info(f'Analyzing distribution for: {iri}')
-    current_app.logger.info(f'ETL:{etl!s}')
+    current_app.logger.debug(f'ETL:{etl!s}')
     if etl:  # FIXME: ETL not used at the moment
         current_app.logger.warn('Request to use ETL is currently ignored!')
 
     if rfc3987.match(iri):
-        t = analyze.delay(iri, etl)
-        return jsonify([v for v in t.collect()][1][1][1])
-        # TODO: switch to trigger - status - fetch result model
+        try:
+            t = analyze.delay(iri, etl)
+            return {}
+        except IndexError as e:
+            current_app.logger.debug(e)
+            abort(400)
     else:
         abort(400)
 
+
+@blueprint.route('/api/v1/analyze/endpoint', methods=['GET'])
+@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
+def api_analyze_endpoint():
+    """Analyze an endpoint."""
+    iri = request.args.get('iri', None)
+    pass
+
+
+@blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
+@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
+def api_analyze_catalog():
+    """Analyze a catalog."""
+    iri = request.args.get('iri', None)
+    pass
 
 @blueprint.route('/api/v1/query/dataset')
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
@@ -96,3 +127,15 @@ def distr_index(redis_url):
             return jsonify(json.loads(r.get(f'distrquery:{iri}')))
     else:
         abort(400)
+
+@blueprint.route('/api/v1/stat/format')
+@environment('REDIS')
+def stat_format(redis_url):
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    return jsonify(r.hgetall("stat:format"))
+
+@blueprint.route('/api/v1/stat/failed')
+@environment('REDIS')
+def stat_failed(redis_url):
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    return jsonify(list(r.smembers("stat:failed")))
