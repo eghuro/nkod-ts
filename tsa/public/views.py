@@ -54,20 +54,25 @@ def api_analyze_get(redis_url):
 def api_analyze_iri():
     """Analyze a distribution."""
     iri = request.args.get('iri', None)
-    etl = bool(int(request.args.get('etl', 0)))
 
     current_app.logger.info(f'Analyzing distribution for: {iri}')
-    current_app.logger.debug(f'ETL:{etl!s}')
-    if etl:  # FIXME: ETL not used at the moment
-        current_app.logger.warn('Request to use ETL is currently ignored!')
 
     if rfc3987.match(iri):
-        try:
-            analyze.delay(iri, etl, False)
-            return {}
-        except IndexError as e:
-            current_app.logger.debug(e)
-            abort(400)
+        analyze.delay(iri)
+        return "OK"
+    else:
+        abort(400)
+
+@blueprint.route('/api/v1/analyze/endpoint', methods=['POST'])
+def api_analyze_endpoint():
+    """Analyze an Endpoint."""
+    iri = request.args.get('sparql', None)
+
+    current_app.logger.info(f'Analyzing SPARQL endpoint: {iri}')
+
+    if rfc3987.match(iri):
+        process_endpoint.delay(iri)
+        return "OK"
     else:
         abort(400)
 
@@ -79,24 +84,16 @@ def api_analyze_catalog():
         iri = request.args.get('iri', None)
         current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
         if rfc3987.match(iri):
-            try:
-                analyze.delay(iri, False, True)
-                return {}
-            except IndexError as e:
-                current_app.logger.debug(e)
-                abort(400)
+            inspect_catalog.delay(iri)
+            return "OK"
         else:
             abort(400)
     elif 'sparql' in request.args:
         iri = request.args.get('sparql', None)
         current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
         if rfc3987.match(iri):
-            try:
-                inspect_endpoint.delay(iri)
-                return {}
-            except IndexError as e:
-                current_app.logger.debug(e)
-                abort(400)
+            inspect_endpoint.delay(iri)
+            return "OK"
         else:
             abort(400)
     else:

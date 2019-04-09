@@ -8,27 +8,21 @@ import requests
 from atenvironment import environment
 from celery import group
 
-from tsa.analyzer import Analyzer
+from tsa.analyzer import CubeAnalyzer, SkosAnalyzer, GenericAnalyzer
 from tsa.celery import celery
 from tsa.monitor import monitor
-from tsa.endpoint import SparqlEndpointAnalyzer
+from tsa.endpoint import SparqlEndpointAnalyzer, SparqlGraph
 
 
 @celery.task
-@environment('ETL', 'VIRTUOSO', 'REDIS')
-def system_check(etl, virtuoso, redis_url):
+@environment('REDIS')
+def system_check(redis_url):
     """Runs an availability test of additional systems.
 
-    Tested are: virtuoso, ETL, redis.
+    Tested are: redis.
     """
     log = logging.getLogger(__name__)
     log.info('System check started')
-    #log.info(f'Testing LP-ETL, URL: {etl!s}')
-    #requests.get(etl).raise_for_status()
-
-    #virtuoso_url = f'{virtuoso!s}/sparql'
-    #log.info(f'Testing virtuoso, URL: {virtuoso_url}')
-    #requests.get(virtuoso_url).raise_for_status()
 
     log.info(f'Testing redis, URL: {redis_url}')
     r = redis.StrictRedis().from_url(redis_url)
@@ -44,9 +38,16 @@ def hello():
 
 @celery.task
 @environment('REDIS')
-def analyze(iri, etl, catalog, redis_url):
+def analyze(iri, redis_url):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
+    red = redis.StrictRedis().from_url(redis_url)
+    key = f'distributions'
+    if red.sadd(key, iri) == 0:
+        log.debug(f'Skipping distribution as it was recently analyzed: {iri!s}')
+        return
+    red.expire(key, 30*24*60*60)
+
     log.info(f'Analyzing {iri!s}')
 
     if iri.endswith('sparql'):
@@ -54,8 +55,6 @@ def analyze(iri, etl, catalog, redis_url):
         process_endpoint.delay(iri)
 
     guess = rdflib.util.guess_format(iri)
-
-    red = redis.StrictRedis().from_url(redis_url)
     try:
         r = requests.get(iri, verify=False, stream=True)
         r.raise_for_status()
@@ -84,10 +83,7 @@ def analyze(iri, etl, catalog, redis_url):
                     red.append(key, chunk)
             red.expire(key, 60*60)
 
-        if catalog:
-            pipeline = inspect_catalog.si(iri)
-        else:
-            pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
+        pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         pipeline.delay()
         return {}
     except:
@@ -96,31 +92,52 @@ def analyze(iri, etl, catalog, redis_url):
         return {}
 
 
-@celery.task(serializer='json')
+@celery.task()
 @environment('REDIS')
 def run_analyzer(iri, format_guess, redis_cfg):
     """Actually run the analyzer."""
-    log = logging.getLogger(__name__)
+    key_data = f'data:{iri!s}'
+    key_result = f'analyze:{iri!s}'
+    red.set(key_result, json.dumps(parallel_analyze(key_data, format_guess)))
+    red.expire(key_result, 30*24*60*60) #30D
 
-    red = redis.StrictRedis().from_url(redis_cfg)
-    key = f'data:{iri!s}'
-    log.debug('Parsing graph')
-    try:
-        g = rdflib.ConjunctiveGraph()
-        g.parse(data=red.get(key), format=format_guess)
 
-        a = Analyzer(iri)
-        key = f'analyze:{iri!s}'
-        red.set(key, json.dumps(a.analyze(g)))
-        red.expire(key, 30*24*60*60) #30D
-    except rdflib.plugin.PluginException:
-        log.debug('Failed to parse graph')
-        return {}
+def parallel_analyze(key, format_guess):
+    tokens = ['cube', 'skos', 'generic']
+    g = group([run_one_analyzer.si(token, key, format_guess) for token in tokens)
+    r = g.apply_async()
+    return r.join()
+
 
 @celery.task
-def process_endpoint(iri):
-    # run analyzer and indexer on the endpoint instead of parsing the graph
-    group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
+@environment('REDIS')
+def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
+    analyzers = {'cube': CubeAnalyzer, 'skos': SkosAnalyzer, 'generic': GenericAnalyzer}
+    analyzer = analyzers[analyzer_token]()
+
+    red = redis.StrictRedis().from_url(redis_cfg)
+    try:
+        g = rdflib.ConjunctiveGraph()
+        log.debug('Parsing graph')
+        g.parse(data=red.get(key), format=format_guess)
+        return json.dumps(a.analyze(g))
+    except rdflib.plugin.PluginException:
+        log.debug('Failed to parse graph')
+        return None
+
+
+@celery.task
+@environment('REDIS')
+def process_endpoint(iri, redis_cfg):
+    red = redis.StrictRedis().from_url(redis_cfg)
+    key = f'endpoints'
+    if red.sadd(key, iri) > 0:
+        # run analyzer and indexer on the endpoint instead of parsing the graph
+        group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
+        red.expire(key, 30*24*60*60) #30D
+    else:
+        log = logging.getLogger(__name__)
+        log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
 @celery.task
@@ -128,10 +145,10 @@ def process_endpoint(iri):
 def analyze_endpoint(iri, redis_cfg):
     red = redis.StrictRedis().from_url(redis_cfg)
     sg = SparqlGraph(iri)
-    a = Analyzer(None)
     g = sg.extract_graph() #TODO: refactor the analyze method to use SPARQL queries as well
     key = f'analyze:{iri!s}'
-    red.set(key, json.dumps(a.analyze(g)))
+    analyzers = [CubeAnalyzer(), SkosAnalyzer(), GenericAnalyzer()]
+    red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
     red.expire(key, 30*24*60*60) #30D
 
 
@@ -163,24 +180,26 @@ def index(iri, format_guess, redis_cfg):
 
 
 def run_indexer(iri, g, r):
+    log = logging.getLogger(__name__)
     pipe = r.pipeline()
     exp = 30 * 24 * 60 * 60  # 30D
-    analyzer = Analyzer(iri)
+
     log.info('Indexing ...')
     cnt = 0
-    for ds, key in analyzer.find_relation(g):
-        log.info(f'Related: {ds} - {key}')
-        pipe.sadd(f'related:{key}', ds)
-        pipe.sadd(f'key:{ds}', key)
-        pipe.sadd(f'ds:{analyzer.distribution}', ds)
-        pipe.sadd(f'distr:{ds}', analyzer.distribution)
+    for analyzer in [CubeAnalyzer(), SkosAnalyzer(), GenericAnalyzer()]:
+        for ds, key in analyzer.find_relation(g):
+            log.info(f'Related: {ds} - {key}')
+            pipe.sadd(f'related:{key}', ds)
+            pipe.sadd(f'key:{ds}', key)
+            pipe.sadd(f'ds:{analyzer.distribution}', ds)
+            pipe.sadd(f'distr:{ds}', analyzer.distribution)
 
-        pipe.expire(f'related:{key}', exp)
-        pipe.expire(f'key:{ds}', exp)
-        pipe.expire(f'ds:{analyzer.distribution}', exp)
-        pipe.expire(f'distr:{ds}', exp)
+            pipe.expire(f'related:{key}', exp)
+            pipe.expire(f'key:{ds}', exp)
+            pipe.expire(f'ds:{analyzer.distribution}', exp)
+            pipe.expire(f'distr:{ds}', exp)
 
-        cnt = cnt + 6
+            cnt = cnt + 6
     pipe.execute()
     log.info(f'Indexed {cnt!s} records')
     return cnt
@@ -258,7 +277,14 @@ def inspect_catalog(iri, redis_cfg):
     for distribution in g.subjects(RDF.type, rdflib.URIRef('http://www.w3.org/ns/dcat#Distribution')):
         for access in g.objects(d, rdflib.URIRef('http://www.w3.org/ns/dcat#accessURL')):
             log.debug(f'Scheduling analysis of {access!s}')
-            analyze.si(str(access), False, False).delay()
+            analyze.si(str(access)).delay()
+    for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
+        for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
+            log.debug(f'Scheduling analysis of {access!s}')
+            analyze.si(str(dump)).delay()
+        for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
+            log.debug(f'Scheduling analysis of {endpoint!s}')
+            process_endpoint.si(str(endpoint)).delay()
 
 @celery.task
 def inspect_endpoint(iri):

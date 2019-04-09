@@ -7,14 +7,10 @@ from rdflib import Namespace
 from rdflib.namespace import RDF
 
 
-class Analyzer(object):
+class CubeAnalyzer(object):
     """RDF dataset analyzer focusing on DataCube."""
 
     qb = Namespace('http://purl.org/linked-data/cube#')
-
-    def __init__(self, iri):
-        """Initialize a class by recording a distribution IRI we inspect."""
-        self.distribution = iri
 
     def find_relation(self, graph):
         """We consider DSs to be related if they share a resource on dimension."""
@@ -78,17 +74,9 @@ class Analyzer(object):
 
 
     def analyze(self, graph):
-        """Basic graph analysis and basic analysis of a datacube."""
-        triples = len(graph)
-        predicates_count = defaultdict(int)
-        classes_count = defaultdict(int)
+        """Analysis of a datacube."""
 
         datasets = defaultdict(QbDataset)
-
-        for s, p, o in graph:
-            predicates_count[p] = predicates_count[p] + 1
-            if p == RDF.type:
-                classes_count[o] = classes_count[o] + 1
 
         for dataset in graph.subjects(RDF.type, Analyzer.qb.DataSet):
             for structure in graph.objects(dataset, Analyzer.qb.structure):
@@ -105,9 +93,6 @@ class Analyzer(object):
             d[k]['measures'] = list(datasets[k].measures)
 
         summary = {
-            'triples': triples,
-            'predicates': predicates_count,
-            'classes': classes_count,
             'datasets': d
         }
 
@@ -115,8 +100,6 @@ class Analyzer(object):
 
 
 class SkosAnalyzer(object):
-    def __init__(self, iri):
-        pass
 
     def analyze(self, graph):
         # pocet konceptu
@@ -133,8 +116,33 @@ class SkosAnalyzer(object):
         # ?a skos:narrowerTransitive ?b
         # ?a skos:narrower ?b
         # ?collection skos:member ?a, ?b
+        # ?a, ?b skos:inScheme ?c
+        #
         pass
 
+class GenericAnalyzer(object):
+
+    def analyze(self, graph):
+        """Basic graph analysis."""
+        triples = len(graph)
+        predicates_count = defaultdict(int)
+        classes_count = defaultdict(int)
+
+        for s, p, o in graph:
+            predicates_count[p] = predicates_count[p] + 1
+            if p == RDF.type:
+                classes_count[o] = classes_count[o] + 1
+
+        summary = {
+            'triples': triples,
+            'predicates': predicates_count,
+            'classes': classes_count
+        }
+        return summary
+
+    def find_relation(self, graph):
+        #?a owl:sameAs ?b
+        pass
 
 class QbDataset(object):
     """Model for reporting DataCube dataset.

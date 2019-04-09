@@ -18,7 +18,7 @@ class SparqlGraph(object):
     def extract_graph(self):
         extractor = "construct {?s ?p ?o} where {?s ?p ?o}"
         self.__sparql.setQuery(extractor)
-        ret = sparql.query().convert()
+        ret = self.__sparql.query().convert()
         g = Graph()
         g.parse(data=ret, format="n3")
         return g
