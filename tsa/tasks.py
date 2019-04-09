@@ -49,6 +49,7 @@ def analyze(iri, etl, redis_url):
     log.info(f'Analyzing {iri!s}')
     guess = rdflib.util.guess_format(iri)
 
+    red = redis.StrictRedis().from_url(redis_url)
     try:
         r = requests.get(iri, verify=False, stream=True)
         r.raise_for_status()
@@ -60,21 +61,28 @@ def analyze(iri, etl, redis_url):
 
         if guess is None:
             guess = r.headers.get('content-type')
-        monitor.log_format(guess)
+        monitor.log_format(str(guess))
         log.info(f'Guessing format to be {guess!s}')
 
+        if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
+                          'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
+                          'trix', 'trig', 'turtle', 'xml', 'json-ld']:
+            log.info(f'Skipping this distribution')
+            return
+
         key = f'data:{iri!s}'
-        red = redis.StrictRedis().from_url(redis_url)
         if not red.exists(key):
             chsize = 1024
             for chunk in r.iter_content(chunk_size=chsize):
                 if chunk:
                     red.append(key, chunk)
-            red.expire(key, 10)
+            red.expire(key, 60*60)
 
-        return group(index.si(iri, guess), run_analyzer.si(iri, guess))()
+        group(index.si(iri, guess), run_analyzer.si(iri, guess)).delay()
+        return {}
     except:
-        log.exception(f'Failed to get {iri!s}')
+        log.warn(f'Failed to get {iri!s}')
+        red.sadd('stat:failed', str(iri))
         return {}
 
 
@@ -92,7 +100,9 @@ def run_analyzer(iri, format_guess, redis_cfg):
         g.parse(data=red.get(key), format=format_guess)
 
         a = Analyzer(iri)
-        return a.analyze(g)
+        key = f'analyze:{iri!s}'
+        red.set(key, json.dumps(a.analyze(g)))
+        red.expire(key, 30*24*60*60) #30D
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return {}
@@ -115,7 +125,7 @@ def index(iri, format_guess, redis_cfg):
         return 0
 
     pipe = r.pipeline()
-    exp = 60 * 60  # 1H
+    exp = 30 * 24 * 60 * 60  # 30D
 
     analyzer = Analyzer(iri)
     log.info('Indexing ...')
@@ -163,7 +173,7 @@ def index_query(iri, redis_url):
     for ds in all_ds:
         e[ds] = list(r.smembers(f'distr:{ds}'))
 
-    exp = 60 * 60  # 1H
+    exp = 24 * 60 * 60  # 24H
     key = f'query:{iri}'
     with r.pipeline() as pipe:
         pipe.set(key, json.dumps({'related': d, 'distribution': e}))
@@ -184,7 +194,7 @@ def index_distribution_query(iri, redis_url):
     for ds in r.smembers(f'ds:{iri}'):
         related.discard(ds)
 
-    exp = 60 * 60  # 1H
+    exp = 24 * 60 * 60  # 24H
     key = f'distrquery:{iri}'
     with r.pipeline() as pipe:
         pipe.set(key, json.dumps(list(related)))
