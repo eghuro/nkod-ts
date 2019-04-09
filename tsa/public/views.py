@@ -151,3 +151,25 @@ def stat_format(redis_url):
 def stat_failed(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     return jsonify(list(r.smembers("stat:failed")))
+
+@blueprint.route('/api/v1/query/analysis', methods=['POST'])
+@environment('REDIS')
+def batch_analysis(redis_url):
+    analyses = []
+    predicates = defaultdict(int)
+    classes = defaultdict(int)
+
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    for iri in request.get_json():
+        if rfc3987.match(iri):
+            key = f'analyze:{iri!s}'
+            if r.exists(key):
+                analysis = json.loads(r.get(key))
+                for p in analysis['predicates']:
+                    predicates[p] += analysis['predicates'][p]
+                for c in analysis['classes']:
+                    classes[c] += analysis['classes'][c]
+                analyses.append(analysis)
+    analyses.append(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))
+    analyses.append(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))
+    return jsonify(analyses)
