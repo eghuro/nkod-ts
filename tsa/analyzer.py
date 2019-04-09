@@ -114,9 +114,6 @@ class Analyzer(object):
         return summary
 
 
-class SparqlEndpointAnalyzer(object):
-    pass
-
 class SkosAnalyzer(object):
     def __init__(self, iri):
         pass

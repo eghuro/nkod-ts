@@ -9,7 +9,7 @@ from atenvironment import environment
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
-from tsa.tasks import analyze, hello, index_distribution_query, index_query, system_check
+from tsa.tasks import analyze, hello, index_distribution_query, index_query, inspect_endpoint, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -63,40 +63,46 @@ def api_analyze_iri():
 
     if rfc3987.match(iri):
         try:
-            t = analyze.delay(iri, etl, False)
+            analyze.delay(iri, etl, False)
             return {}
         except IndexError as e:
             current_app.logger.debug(e)
             abort(400)
     else:
         abort(400)
-
-
-@blueprint.route('/api/v1/analyze/endpoint', methods=['GET'])
-@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
-def api_analyze_endpoint():
-    """Analyze an endpoint."""
-    iri = request.args.get('iri', None)
-    pass
 
 
 @blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
-@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 def api_analyze_catalog():
     """Analyze a catalog."""
-    iri = request.args.get('iri', None)
-    current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
-    if rfc3987.match(iri):
-        try:
-            t = analyze.delay(iri, False, True)
-            return {}
-        except IndexError as e:
-            current_app.logger.debug(e)
+    if 'iri' in request.args:
+        iri = request.args.get('iri', None)
+        current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
+        if rfc3987.match(iri):
+            try:
+                analyze.delay(iri, False, True)
+                return {}
+            except IndexError as e:
+                current_app.logger.debug(e)
+                abort(400)
+        else:
+            abort(400)
+    elif 'sparql' in request.args:
+        iri = request.args.get('sparql', None)
+        current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
+        if rfc3987.match(iri):
+            try:
+                inspect_endpoint.delay(iri)
+                return {}
+            except IndexError as e:
+                current_app.logger.debug(e)
+                abort(400)
+        else:
             abort(400)
     else:
         abort(400)
 
-@blueprint.route('/api/v1/query/dataset')
+@blueprint.route('/api/v1/query/dataset', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
 def ds_index(redis_url):
@@ -120,7 +126,7 @@ def ds_index(redis_url):
         abort(400)
 
 
-@blueprint.route('/api/v1/query/distribution')
+@blueprint.route('/api/v1/query/distribution', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
 def distr_index(redis_url):
@@ -137,13 +143,13 @@ def distr_index(redis_url):
     else:
         abort(400)
 
-@blueprint.route('/api/v1/stat/format')
+@blueprint.route('/api/v1/stat/format', methods=['GET'])
 @environment('REDIS')
 def stat_format(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     return jsonify(r.hgetall("stat:format"))
 
-@blueprint.route('/api/v1/stat/failed')
+@blueprint.route('/api/v1/stat/failed', methods=['GET'])
 @environment('REDIS')
 def stat_failed(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)

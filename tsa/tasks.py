@@ -11,6 +11,7 @@ from celery import group
 from tsa.analyzer import Analyzer
 from tsa.celery import celery
 from tsa.monitor import monitor
+from tsa.endpoint import SparqlEndpointAnalyzer
 
 
 @celery.task
@@ -47,6 +48,11 @@ def analyze(iri, etl, catalog, redis_url):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     log.info(f'Analyzing {iri!s}')
+
+    if iri.endswith('sparql'):
+        log.info(f'Guessing it is a SPARQL endpoint')
+        process_endpoint.delay(iri)
+
     guess = rdflib.util.guess_format(iri)
 
     red = redis.StrictRedis().from_url(redis_url)
@@ -111,6 +117,31 @@ def run_analyzer(iri, format_guess, redis_cfg):
         log.debug('Failed to parse graph')
         return {}
 
+@celery.task
+def process_endpoint(iri):
+    # run analyzer and indexer on the endpoint instead of parsing the graph
+    group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
+
+
+@celery.task
+@environment('REDIS')
+def analyze_endpoint(iri, redis_cfg):
+    red = redis.StrictRedis().from_url(redis_cfg)
+    sg = SparqlGraph(iri)
+    a = Analyzer(None)
+    g = sg.extract_graph() #TODO: refactor the analyze method to use SPARQL queries as well
+    key = f'analyze:{iri!s}'
+    red.set(key, json.dumps(a.analyze(g)))
+    red.expire(key, 30*24*60*60) #30D
+
+
+@celery.task
+@environment('REDIS')
+def index_endpoint(iri, redis_cfg):
+    g = SparqlGraph(iri)
+    r = redis.StrictRedis.from_url(redis_cfg)
+    return run_indexer(None, g, r)
+
 
 @celery.task
 @environment('REDIS')
@@ -128,9 +159,12 @@ def index(iri, format_guess, redis_cfg):
         log.debug('Failed to parse graph')
         return 0
 
+    return run_indexer(iri, g, r)
+
+
+def run_indexer(iri, g, r):
     pipe = r.pipeline()
     exp = 30 * 24 * 60 * 60  # 30D
-
     analyzer = Analyzer(iri)
     log.info('Indexing ...')
     cnt = 0
@@ -225,3 +259,9 @@ def inspect_catalog(iri, redis_cfg):
         for access in g.objects(d, rdflib.URIRef('http://www.w3.org/ns/dcat#accessURL')):
             log.debug(f'Scheduling analysis of {access!s}')
             analyze.si(str(access), False, False).delay()
+
+@celery.task
+def inspect_endpoint(iri):
+    inspector = SparqlEndpointAnalyzer()
+    inspector.peek_endpoint(iri)
+    inspect_catalog.delay(iri)
