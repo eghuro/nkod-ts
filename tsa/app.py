@@ -52,7 +52,7 @@ def register_errorhandlers(app):
             error_code = 401
         return render_template('{0}.html'.format(error_code), event_id=g.sentry_event_id,
                                public_dsn=sentry.client.get_public_dsn('https')), error_code
-    for errcode in [400, 401, 404, 500]:
+    for errcode in []:
         app.errorhandler(errcode)(render_error)
     return None
 
