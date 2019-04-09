@@ -187,19 +187,22 @@ def run_indexer(iri, g, r):
     log.info('Indexing ...')
     cnt = 0
     for analyzer in [CubeAnalyzer(), SkosAnalyzer(), GenericAnalyzer()]:
-        for ds, key in analyzer.find_relation(g):
-            log.info(f'Related: {ds} - {key}')
-            pipe.sadd(f'related:{key}', ds)
-            pipe.sadd(f'key:{ds}', key)
-            pipe.sadd(f'ds:{analyzer.distribution}', ds)
-            pipe.sadd(f'distr:{ds}', analyzer.distribution)
+        for key, rel_type in analyzer.find_relation(g):
+            log.info(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
+            #pipe.sadd(f'related:{key!s}', iri)
+            pipe.sadd(f'related:{rel_type!s}:{key!s}', iri)
+            pipe.sadd(f'relationship', rel_type)
+            pipe.sadd(f'key:{iri!s}', key)
+            pipe.sadd(f'reltype:{iri!s}', rel_type)
 
-            pipe.expire(f'related:{key}', exp)
-            pipe.expire(f'key:{ds}', exp)
-            pipe.expire(f'ds:{analyzer.distribution}', exp)
-            pipe.expire(f'distr:{ds}', exp)
+            #pipe.expire(f'related:{key!s}', exp)
+            pipe.expire(f'related:{rel_type!s}:{key!s}', exp)
+            pipe.expire(f'relationship', exp)
+            pipe.expire(f'key:{iri!s}', exp)
+            pipe.expire(f'reltype:{iri!s}', exp)
 
-            cnt = cnt + 6
+            cnt = cnt + 4
+
     pipe.execute()
     log.info(f'Indexed {cnt!s} records')
     return cnt
@@ -207,7 +210,7 @@ def run_indexer(iri, g, r):
 
 @celery.task
 @environment('REDIS')
-def index_query(iri, redis_url):
+def index_query(iri, redis_url): #TODO needs rewriting, probably just distrquery
     """Query the index and construct related datasets for the iri.
 
     Final result is stored in redis.

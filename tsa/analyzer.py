@@ -18,7 +18,7 @@ class CubeAnalyzer(object):
         log.info('Looking up resources used on a dimension')
         for ds, resource in self.__resource_on_dimension(graph):
             log.info(f'Dataset: {ds} - Resource on dimension: {resource}')
-            yield ds, resource
+            yield resource, 'qb'
 
     def __dimensions(self, graph):
         d = defaultdict(set)
@@ -72,7 +72,6 @@ class CubeAnalyzer(object):
                 for row1 in qres1:
                     yield row.dataset, row1.resource
 
-
     def analyze(self, graph):
         """Analysis of a datacube."""
 
@@ -109,16 +108,25 @@ class SkosAnalyzer(object):
         pass
 
     def find_relation(self, graph):
-        # ?a skos:semanticRelation ?b
-        # ?a skos:related ?b
-        # ?a skos:broaderTransitive ?b
-        # ?a skos:broader ?b
-        # ?a skos:narrowerTransitive ?b
-        # ?a skos:narrower ?b
-        # ?collection skos:member ?a, ?b
-        # ?a, ?b skos:inScheme ?c
-        #
-        pass
+        for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a skos:inScheme ?scheme}"):
+            yield row['scheme'], 'inScheme'
+
+        for row in graph.query("SELECT DISTINCT ?collection WHERE {?collection skos:member ?a}"):
+            yield row['collection'], 'collection'
+
+        for row in graph.query("""
+        SELECT ?a, ?b WHERE {
+            OPTIONAL {?a skos:related ?b}
+            OPTIONAL {?a skos:semanticRelation ?b}
+            OPTIONAL {?a skos:broader ?b}
+            OPTIONAL {?a skos:broaderTransitive ?b}
+            OPTIONAL {?a skos:narrower ?b}
+            OPTIONAL {?a skos:narrowerTransitive ?b}
+        }
+        """):
+            yield row['a'], 'broadNarrow'
+            yield row['b'], 'broadNarrow'
+
 
 class GenericAnalyzer(object):
 
@@ -141,8 +149,9 @@ class GenericAnalyzer(object):
         return summary
 
     def find_relation(self, graph):
-        #?a owl:sameAs ?b
-        pass
+        for row in graph.query("SELECT ?a, ?b WHERE { ?a owl:sameAs ?b }"):
+            yield row[a], 'sameAs'
+            yield row[b], 'sameAs'
 
 class QbDataset(object):
     """Model for reporting DataCube dataset.
