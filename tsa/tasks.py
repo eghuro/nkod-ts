@@ -8,7 +8,7 @@ import requests
 from atenvironment import environment
 from celery import group, chord
 
-from tsa.analyzer import CubeAnalyzer, SkosAnalyzer, GenericAnalyzer
+from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.monitor import monitor
 from tsa.endpoint import SparqlEndpointAnalyzer, SparqlGraph
@@ -96,7 +96,7 @@ def analyze(iri, redis_url):
 def run_analyzer(iri, format_guess, redis_cfg):
     """Actually run the analyzer."""
     key = f'data:{iri!s}'
-    tokens = ['cube', 'skos', 'generic']
+    tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
     chord(run_one_analyzer.si(token, key, format_guess) for token in tokens)(store_analysis.s(iri, redis_cfg))
 
 
@@ -112,8 +112,7 @@ def store_analysis(results, iri, redis_cfg):
 @environment('REDIS')
 def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
     log = logging.getLogger(__name__)
-    analyzers = {'cube': CubeAnalyzer, 'skos': SkosAnalyzer, 'generic': GenericAnalyzer}
-    analyzer = analyzers[analyzer_token]()
+    analyzer = getAnalyzer(analyzer_token)
 
     red = redis.StrictRedis().from_url(redis_cfg)
     try:
@@ -124,6 +123,13 @@ def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return None
+
+
+def getAnalyzer(analyzer_token):
+    for a in AbstractAnalyzer.__subclasses__():
+        if a.token == analyzer_token:
+            return a()
+    raise ValueError(analyzer_token)
 
 
 @celery.task
@@ -147,7 +153,7 @@ def analyze_endpoint(iri, redis_cfg):
     sg = SparqlGraph(iri)
     g = sg.extract_graph() #TODO: refactor the analyze method to use SPARQL queries as well
     key = f'analyze:{iri!s}'
-    analyzers = [CubeAnalyzer(), SkosAnalyzer(), GenericAnalyzer()]
+    analyzers = [it() for it in AbstractAnalyzer.__subclasses__()]
     red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
     red.expire(key, 30*24*60*60) #30D
 
@@ -186,7 +192,7 @@ def run_indexer(iri, g, r):
 
     log.info('Indexing ...')
     cnt = 0
-    for analyzer in [CubeAnalyzer(), SkosAnalyzer(), GenericAnalyzer()]:
+    for analyzer in [it() for it in AbstractAnalyzer.__subclasses__()]:
         for key, rel_type in analyzer.find_relation(g):
             log.info(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
             #pipe.sadd(f'related:{key!s}', iri)
@@ -260,6 +266,7 @@ def index_distribution_query(iri, redis_url):
         pipe.set(key, json.dumps(list(related)))
         pipe.expire(key, exp)
         pipe.execute()
+
 
 @celery.task
 @environment('REDIS')

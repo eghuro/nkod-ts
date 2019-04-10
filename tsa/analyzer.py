@@ -1,5 +1,6 @@
 """Dataset analyzer."""
 
+from abc import ABC
 import logging
 from collections import defaultdict
 
@@ -7,10 +8,15 @@ from rdflib import Namespace
 from rdflib.namespace import RDF
 
 
-class CubeAnalyzer(object):
+class AbstractAnalyzer(ABC):
+    pass
+
+
+class CubeAnalyzer(AbstractAnalyzer):
     """RDF dataset analyzer focusing on DataCube."""
 
     qb = Namespace('http://purl.org/linked-data/cube#')
+    token = 'cube'
 
     def find_relation(self, graph):
         """We consider DSs to be related if they share a resource on dimension."""
@@ -98,7 +104,9 @@ class CubeAnalyzer(object):
         return summary
 
 
-class SkosAnalyzer(object):
+class SkosAnalyzer(AbstractAnalyzer):
+
+    token = 'skos'
 
     def analyze(self, graph):
         # pocet konceptu
@@ -108,27 +116,29 @@ class SkosAnalyzer(object):
         pass
 
     def find_relation(self, graph):
-        for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/inScheme> ?scheme}"):
+        for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme}"):
             yield row['scheme'], 'inScheme'
 
-        for row in graph.query("SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/member> ?a}"):
+        for row in graph.query("SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/core#member> ?a}"):
             yield row['collection'], 'collection'
 
         for row in graph.query("""
         SELECT ?a ?b WHERE {
-            OPTIONAL {?a <http://www.w3.org/2004/02/skos/related> ?b}
-            OPTIONAL {?a <http://www.w3.org/2004/02/skos/semanticRelation> ?b}
-            OPTIONAL {?a <http://www.w3.org/2004/02/skos/broader> ?b}
-            OPTIONAL {?a <http://www.w3.org/2004/02/skos/broaderTransitive> ?b}
-            OPTIONAL {?a <http://www.w3.org/2004/02/skos/narrower> ?b}
-            OPTIONAL {?a <http://www.w3.org/2004/02/skos/narrowerTransitive> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#related> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#semanticRelation> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#broader> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#broaderTransitive> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#narrower> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#narrowerTransitive> ?b}
         }
         """):
             yield row['a'], 'broadNarrow'
             yield row['b'], 'broadNarrow'
 
 
-class GenericAnalyzer(object):
+class GenericAnalyzer(AbstractAnalyzer):
+
+    token = 'generic'
 
     def analyze(self, graph):
         """Basic graph analysis."""
