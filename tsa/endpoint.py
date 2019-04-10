@@ -13,7 +13,10 @@ class SparqlGraph(object):
 
     def query(self, query_str):
         self.__sparql.setQuery(query_str)
-        return self.__sparql.query()
+        results = self.__sparql.query().convert()
+        g = Graph()
+        g.parse(data=results, format="n3")
+        return g.query(query_str)
 
     def extract_graph(self):
         extractor = "construct {?s ?p ?o} where {?s ?p ?o}"

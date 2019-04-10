@@ -10,7 +10,7 @@ from atenvironment import environment
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
-from tsa.tasks import analyze, hello, index_distribution_query, index_query, inspect_endpoint, system_check
+from tsa.tasks import analyze, hello, index_distribution_query, index_query, inspect_endpoint, process_endpoint, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
