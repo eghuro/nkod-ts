@@ -77,12 +77,12 @@ class CubeAnalyzer(object):
 
         datasets = defaultdict(QbDataset)
 
-        for dataset in graph.subjects(RDF.type, Analyzer.qb.DataSet):
-            for structure in graph.objects(dataset, Analyzer.qb.structure):
-                for component in graph.objects(structure, Analyzer.qb.component):
-                    for dimension in graph.objects(component, Analyzer.qb.dimension):
+        for dataset in graph.subjects(RDF.type, CubeAnalyzer.qb.DataSet):
+            for structure in graph.objects(dataset, CubeAnalyzer.qb.structure):
+                for component in graph.objects(structure, CubeAnalyzer.qb.component):
+                    for dimension in graph.objects(component, CubeAnalyzer.qb.dimension):
                         datasets[str(dataset)].dimensions.add(str(dimension))
-                    for measure in graph.objects(component, Analyzer.qb.measure):
+                    for measure in graph.objects(component, CubeAnalyzer.qb.measure):
                         datasets[str(dataset)].measures.add(str(measure))
 
         d = {}
@@ -108,20 +108,20 @@ class SkosAnalyzer(object):
         pass
 
     def find_relation(self, graph):
-        for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a skos:inScheme ?scheme}"):
+        for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/inScheme> ?scheme}"):
             yield row['scheme'], 'inScheme'
 
-        for row in graph.query("SELECT DISTINCT ?collection WHERE {?collection skos:member ?a}"):
+        for row in graph.query("SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/member> ?a}"):
             yield row['collection'], 'collection'
 
         for row in graph.query("""
-        SELECT ?a, ?b WHERE {
-            OPTIONAL {?a skos:related ?b}
-            OPTIONAL {?a skos:semanticRelation ?b}
-            OPTIONAL {?a skos:broader ?b}
-            OPTIONAL {?a skos:broaderTransitive ?b}
-            OPTIONAL {?a skos:narrower ?b}
-            OPTIONAL {?a skos:narrowerTransitive ?b}
+        SELECT ?a ?b WHERE {
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/related> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/semanticRelation> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/broader> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/broaderTransitive> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/narrower> ?b}
+            OPTIONAL {?a <http://www.w3.org/2004/02/skos/narrowerTransitive> ?b}
         }
         """):
             yield row['a'], 'broadNarrow'
@@ -149,9 +149,9 @@ class GenericAnalyzer(object):
         return summary
 
     def find_relation(self, graph):
-        for row in graph.query("SELECT ?a, ?b WHERE { ?a owl:sameAs ?b }"):
-            yield row[a], 'sameAs'
-            yield row[b], 'sameAs'
+        for row in graph.query("SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b }"):
+            yield row['a'], 'sameAs'
+            yield row['b'], 'sameAs'
 
 class QbDataset(object):
     """Model for reporting DataCube dataset.

@@ -2,6 +2,7 @@
 """Public section, including homepage and signup."""
 import json
 import logging
+from collections import defaultdict, OrderedDict
 
 import redis
 import rfc3987
@@ -164,12 +165,20 @@ def batch_analysis(redis_url):
         if rfc3987.match(iri):
             key = f'analyze:{iri!s}'
             if r.exists(key):
-                analysis = json.loads(r.get(key))
-                for p in analysis['predicates']:
-                    predicates[p] += analysis['predicates'][p]
-                for c in analysis['classes']:
-                    classes[c] += analysis['classes'][c]
-                analyses.append(analysis)
+                x = json.loads(r.get(key))
+                analyses_red = []
+                for y in x:
+                    analyses_red.append(json.loads(y))
+                for analysis in analyses_red: #from several analyzers
+                    if analysis is None:
+                        continue
+                    if 'predicates' in analysis:
+                        for p in analysis['predicates']:
+                            predicates[p] += analysis['predicates'][p]
+                    if 'classes' in analysis:
+                        for c in analysis['classes']:
+                            classes[c] += analysis['classes'][c]
+                    analyses.append({'iri':iri, 'analysis': analysis})
     analyses.append(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))
     analyses.append(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))
     return jsonify(analyses)

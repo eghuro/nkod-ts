@@ -6,7 +6,7 @@ import rdflib
 import redis
 import requests
 from atenvironment import environment
-from celery import group
+from celery import group, chord
 
 from tsa.analyzer import CubeAnalyzer, SkosAnalyzer, GenericAnalyzer
 from tsa.celery import celery
@@ -84,34 +84,34 @@ def analyze(iri, redis_url):
             red.expire(key, 60*60)
 
         pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
-        pipeline.delay()
-        return {}
+        return pipeline.delay()
     except:
         log.warn(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
         return {}
 
 
-@celery.task()
+@celery.task
 @environment('REDIS')
 def run_analyzer(iri, format_guess, redis_cfg):
     """Actually run the analyzer."""
-    key_data = f'data:{iri!s}'
-    key_result = f'analyze:{iri!s}'
-    red.set(key_result, json.dumps(parallel_analyze(key_data, format_guess)))
-    red.expire(key_result, 30*24*60*60) #30D
-
-
-def parallel_analyze(key, format_guess):
+    key = f'data:{iri!s}'
     tokens = ['cube', 'skos', 'generic']
-    g = group([run_one_analyzer.si(token, key, format_guess) for token in tokens)
-    r = g.apply_async()
-    return r.join()
+    chord(run_one_analyzer.si(token, key, format_guess) for token in tokens)(store_analysis.s(iri, redis_cfg))
+
+
+@celery.task
+def store_analysis(results, iri, redis_cfg):
+    red = redis.StrictRedis().from_url(redis_cfg)
+    key_result = f'analyze:{iri!s}'
+    red.set(key_result, results)
+    red.expire(key_result, 30*24*60*60) #30D
 
 
 @celery.task
 @environment('REDIS')
 def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
+    log = logging.getLogger(__name__)
     analyzers = {'cube': CubeAnalyzer, 'skos': SkosAnalyzer, 'generic': GenericAnalyzer}
     analyzer = analyzers[analyzer_token]()
 
@@ -120,7 +120,7 @@ def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
         g = rdflib.ConjunctiveGraph()
         log.debug('Parsing graph')
         g.parse(data=red.get(key), format=format_guess)
-        return json.dumps(a.analyze(g))
+        return json.dumps(analyzer.analyze(g))
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return None
