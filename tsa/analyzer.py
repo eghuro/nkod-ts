@@ -124,6 +124,14 @@ class SkosAnalyzer(AbstractAnalyzer):
 
         for row in graph.query("""
         SELECT ?a ?b WHERE {
+            ?a <http://www.w3.org/2004/02/skos/core#exactMatch> ?b.
+        }
+        """):
+            yield row['a'], 'exactMatch'
+            yield row['b'], 'exactMatch'
+
+        for row in graph.query("""
+        SELECT ?a ?b WHERE {
             OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#related> ?b}
             OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#semanticRelation> ?b}
             OPTIONAL {?a <http://www.w3.org/2004/02/skos/core#broader> ?b}
