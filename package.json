@@ -21,7 +21,6 @@
   },
   "homepage": "https://github.com/eghuro/crawlcheckio#readme",
   "dependencies": {
-    "statsd": "^0.8.0"
   },
   "devDependencies": {}
 }
