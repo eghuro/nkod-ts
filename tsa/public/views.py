@@ -8,6 +8,7 @@ import redis
 import rfc3987
 from atenvironment import environment
 from flask import Blueprint, abort, current_app, jsonify, request
+from celery import group
 
 from tsa.cache import cached
 from tsa.tasks.analyze import analyze, process_endpoint
@@ -40,6 +41,7 @@ def test_system():
     log.info(f'System check result: {x!s}')
     return str(x)
 
+
 @blueprint.route('/api/v1/analyze', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
@@ -68,6 +70,7 @@ def api_analyze_iri():
     else:
         abort(400)
 
+
 @blueprint.route('/api/v1/analyze/endpoint', methods=['POST'])
 def api_analyze_endpoint():
     """Analyze an Endpoint."""
@@ -76,7 +79,7 @@ def api_analyze_endpoint():
     current_app.logger.info(f'Analyzing SPARQL endpoint: {iri}')
 
     if rfc3987.match(iri):
-        process_endpoint.delay(iri)
+        (process_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
         return "OK"
     else:
         abort(400)
@@ -89,7 +92,7 @@ def api_analyze_catalog():
         iri = request.args.get('iri', None)
         current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
         if rfc3987.match(iri):
-            inspect_catalog.delay(iri)
+            (inspect_catalog.si(iri) | index_distribution_query.si(iri)).apply_async()
             return "OK"
         else:
             abort(400)
@@ -97,12 +100,13 @@ def api_analyze_catalog():
         iri = request.args.get('sparql', None)
         current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
         if rfc3987.match(iri):
-            inspect_endpoint.delay(iri)
+            (inspect_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
             return "OK"
         else:
             abort(400)
     else:
         abort(400)
+
 
 @blueprint.route('/api/v1/query/dataset', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
@@ -145,17 +149,27 @@ def distr_index(redis_url):
     else:
         abort(400)
 
+
 @blueprint.route('/api/v1/stat/format', methods=['GET'])
 @environment('REDIS')
 def stat_format(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     return jsonify(r.hgetall("stat:format"))
 
+
 @blueprint.route('/api/v1/stat/failed', methods=['GET'])
 @environment('REDIS')
 def stat_failed(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     return jsonify(list(r.smembers("stat:failed")))
+
+
+@blueprint.route('/api/v1/query/analysis', methods=['GET'])
+@environment('REDIS')
+def known_distributions(redis_url):
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    return jsonify(list(r.smembers('distributions').union(r.smembers('endpoints'))))
+
 
 @blueprint.route('/api/v1/query/analysis', methods=['POST'])
 @environment('REDIS')
@@ -185,4 +199,23 @@ def batch_analysis(redis_url):
                     analyses.append({'iri':iri, 'analysis': analysis})
     analyses.append(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))
     analyses.append(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))
+
+    missing_query = []
+    for iri in request.get_json():
+        key = f'distrquery:{iri!s}'
+        if not r.exists(key):
+            current_app.logger.warn(f'Missing index query result for {iri!s}')
+            missing_query.append(iri)
+
+    current_app.logger.debug('Fetching missing query results')
+    group(index_distribution_query.si(iri) for iri in missing_query).apply_async().get()
+
+    current_app.logger.debug('Appending results')
+    for iri in request.get_json():
+        key = f'distrquery:{iri!s}'
+        if not r.exists(key):
+            current_app.logger.warn(f'Missing index query result for {iri!s}')
+        else:
+            analyses.append(json.loads(r.get(key)))
+
     return jsonify(analyses)

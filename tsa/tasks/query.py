@@ -48,16 +48,16 @@ def index_query(iri, redis_url): #TODO needs rewriting, probably just distrquery
 def index_distribution_query(iri, redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
 
-    related = set()
-    for ds in r.smembers(f'ds:{iri}'):
-        for key in r.smembers(f'key:{ds}'):
-            related.update(r.smembers(f'related:{key}'))
-    for ds in r.smembers(f'ds:{iri}'):
-        related.discard(ds)
+    related = dict()
+    for rel_type in r.smembers(f'reltype:{iri}'):
+        for key in r.smembers(f'key:{iri}'):
+            related[rel_type].update(r.smembers(f'related:{rel_type!s}:{key!s}'))
+        related[rel_type].discard(iri)
+        related[rel_type] = list(related[rel_type])
 
-    exp = 24 * 60 * 60  # 24H
+    exp = 30 * 24 * 60 * 60  # 30D
     key = f'distrquery:{iri}'
     with r.pipeline() as pipe:
-        pipe.set(key, json.dumps(list(related)))
+        pipe.set(key, json.dumps(related))
         pipe.expire(key, exp)
         pipe.execute()
