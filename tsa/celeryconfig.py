@@ -9,4 +9,4 @@ result_serializer = 'json'
 accept_content = ['json']
 timezone = 'Europe/Prague'
 enable_utc = True
-include = ['tsa.tasks']
+include = ['tsa.tasks.analyze','tsa.tasks.batch','tsa.tasks.index','tsa.tasks.query','tsa.tasks.system']

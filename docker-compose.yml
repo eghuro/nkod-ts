@@ -24,7 +24,7 @@ services:
       - redis
       #- virtuoso
       #- etl
-    command: celery worker -l info -A tsa.tasks
+    command: celery worker -l info -A tsa.celery
   #virtuoso:
   #  image: tenforce/virtuoso:1.3.1-virtuoso7.2.2
   #  environment:
