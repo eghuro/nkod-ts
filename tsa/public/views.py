@@ -62,13 +62,22 @@ def api_analyze_iri():
     """Analyze a distribution."""
     iri = request.args.get('iri', None)
 
-    current_app.logger.info(f'Analyzing distribution for: {iri}')
-
-    if rfc3987.match(iri):
-        analyze.delay(iri)
-        return "OK"
+    if iri is not None:
+        current_app.logger.info(f'Analyzing distribution for: {iri}')
+        if rfc3987.match(iri):
+            analyze.delay(iri)
+            return "OK"
+        else:
+            abort(400)
     else:
-        abort(400)
+        iris = []
+        for iri in request.get_json():
+            if rfc3987.match(iri):
+                iris.append(iri)
+        for iri in iris:
+            current_app.logger.info(f'Analyzing distribution for: {iri}')
+            analyze.delay(iri)
+        return "OK"
 
 
 @blueprint.route('/api/v1/analyze/endpoint', methods=['POST'])
@@ -180,6 +189,8 @@ def batch_analysis(redis_url):
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     for iri in request.get_json():
+        if r.sismember('stat:failed', iri):
+            continue
         if rfc3987.match(iri):
             key = f'analyze:{iri!s}'
             if r.exists(key):
@@ -197,25 +208,25 @@ def batch_analysis(redis_url):
                         for c in analysis['classes']:
                             classes[c] += analysis['classes'][c]
                     analyses.append({'iri':iri, 'analysis': analysis})
-    analyses.append(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))
-    analyses.append(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))
+    analyses.append({'predicates': OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True))})
+    analyses.append({'classes': OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True))})
 
     missing_query = []
     for iri in request.get_json():
         key = f'distrquery:{iri!s}'
-        if not r.exists(key):
+        if not r.exists(key) and not r.sismember('stat:failed', iri):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
             missing_query.append(iri)
 
-    current_app.logger.debug('Fetching missing query results')
+    current_app.logger.info('Fetching missing query results')
     group(index_distribution_query.si(iri) for iri in missing_query).apply_async().get()
 
-    current_app.logger.debug('Appending results')
+    current_app.logger.info('Appending results')
     for iri in request.get_json():
         key = f'distrquery:{iri!s}'
-        if not r.exists(key):
+        if not r.exists(key) and not r.sismember('stat:failed', iri):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
         else:
-            analyses.append(json.loads(r.get(key)))
+            analyses.append({'iri': iri, 'related': json.loads(r.get(key))})
 
     return jsonify(analyses)

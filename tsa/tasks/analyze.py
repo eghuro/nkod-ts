@@ -54,6 +54,7 @@ def analyze(iri, redis_url):
             log.info(f'Skipping this distribution')
             return
 
+        monitor.log_size(conlen)
         key = f'data:{iri!s}'
         if not red.exists(key):
             chsize = 1024

@@ -4,6 +4,7 @@ import json
 import logging
 
 import redis
+from collections import defaultdict
 from atenvironment import environment
 
 from tsa.celery import celery
@@ -48,7 +49,7 @@ def index_query(iri, redis_url): #TODO needs rewriting, probably just distrquery
 def index_distribution_query(iri, redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
 
-    related = dict()
+    related = defaultdict(set)
     for rel_type in r.smembers(f'reltype:{iri}'):
         for key in r.smembers(f'key:{iri}'):
             related[rel_type].update(r.smembers(f'related:{rel_type!s}:{key!s}'))
