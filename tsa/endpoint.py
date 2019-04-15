@@ -18,14 +18,6 @@ class SparqlGraph(object):
         g.parse(data=results, format="n3")
         return g.query(query_str)
 
-    def extract_graph(self):
-        extractor = "construct {?s ?p ?o} where {?s ?p ?o}"
-        self.__sparql.setQuery(extractor)
-        ret = self.__sparql.query().convert()
-        g = Graph()
-        g.parse(data=ret, format="n3")
-        return g
-
 
 class SparqlEndpointAnalyzer(object):
 

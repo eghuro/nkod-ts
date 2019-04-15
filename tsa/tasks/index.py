@@ -33,6 +33,9 @@ def index(iri, format_guess, redis_cfg):
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return 0
+    except ValueError:
+        log.debug('Failed to parse graph')
+        return 0
 
     return run_indexer(iri, g, r)
 
@@ -60,7 +63,7 @@ def run_indexer(iri, g, r):
             pipe.expire(f'reltype:{iri!s}', exp)
 
             cnt = cnt + 4
+            pipe.execute()
 
-    pipe.execute()
     log.info(f'Indexed {cnt!s} records')
     return cnt

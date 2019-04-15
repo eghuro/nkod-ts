@@ -177,7 +177,7 @@ def stat_failed(redis_url):
 @environment('REDIS')
 def known_distributions(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(list(r.smembers('distributions').union(r.smembers('endpoints'))))
+    return jsonify(list((r.smembers('distributions').union(r.smembers('endpoints')).difference(r.smembers('stat:failed').union(r.smembers('stat:skipped'))))))
 
 
 @blueprint.route('/api/v1/query/analysis', methods=['POST'])
@@ -189,7 +189,7 @@ def batch_analysis(redis_url):
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     for iri in request.get_json():
-        if r.sismember('stat:failed', iri):
+        if r.sismember('stat:failed', iri) or r.sismember('stat:skipped', iri):
             continue
         if rfc3987.match(iri):
             key = f'analyze:{iri!s}'
@@ -203,18 +203,18 @@ def batch_analysis(redis_url):
                         continue
                     if 'predicates' in analysis:
                         for p in analysis['predicates']:
-                            predicates[p] += analysis['predicates'][p]
+                            predicates[p] += int(analysis['predicates'][p])
                     if 'classes' in analysis:
                         for c in analysis['classes']:
-                            classes[c] += analysis['classes'][c]
+                            classes[c] += int(analysis['classes'][c])
                     analyses.append({'iri':iri, 'analysis': analysis})
-    analyses.append({'predicates': OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True))})
-    analyses.append({'classes': OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True))})
+    analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
+    analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
 
     missing_query = []
     for iri in request.get_json():
         key = f'distrquery:{iri!s}'
-        if not r.exists(key) and not r.sismember('stat:failed', iri):
+        if not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
             missing_query.append(iri)
 
@@ -224,9 +224,19 @@ def batch_analysis(redis_url):
     current_app.logger.info('Appending results')
     for iri in request.get_json():
         key = f'distrquery:{iri!s}'
-        if not r.exists(key) and not r.sismember('stat:failed', iri):
+        if not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
         else:
-            analyses.append({'iri': iri, 'related': json.loads(r.get(key))})
+            related = r.get(key)
+
+            if related is not None:
+                rel_json = json.loads(related)
+            else:
+                rel_json = None
+
+            analyses.append({
+                'iri': iri,
+                'related': rel_json
+            })
 
     return jsonify(analyses)

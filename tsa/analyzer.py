@@ -15,7 +15,6 @@ class AbstractAnalyzer(ABC):
 class CubeAnalyzer(AbstractAnalyzer):
     """RDF dataset analyzer focusing on DataCube."""
 
-    qb = Namespace('http://purl.org/linked-data/cube#')
     token = 'cube'
 
     def find_relation(self, graph):
@@ -83,12 +82,18 @@ class CubeAnalyzer(AbstractAnalyzer):
 
         datasets = defaultdict(QbDataset)
 
-        for dataset in graph.subjects(RDF.type, CubeAnalyzer.qb.DataSet):
-            for structure in graph.objects(dataset, CubeAnalyzer.qb.structure):
-                for component in graph.objects(structure, CubeAnalyzer.qb.component):
-                    for dimension in graph.objects(component, CubeAnalyzer.qb.dimension):
+        for row in graph.query("SELECT DISTINCT ?ds WHERE {?ds a <http://purl.org/linked-data/cube#DataSet>}"):
+            dataset = row['ds']
+            for row in graph.query(f'SELECT DISTINCT ?structure WHERE {{ <{dataset}> <http://purl.org/linked-data/cube#structure> ?structure }}'):
+                structure = row['structure']
+                for row in graph.query(f'SELECT DISTINCT ?component WHERE {{ <{structure}> <http://purl.org/linked-data/cube#component> ?component }}'):
+                    component = row['component']
+
+                    for row in graph.query(f'SELECT DISTINCT ?dimension WHERE {{ <{component}> <http://purl.org/linked-data/cube#dimension> ?dimension }}'):
+                        dimension = row['dimension']
                         datasets[str(dataset)].dimensions.add(str(dimension))
-                    for measure in graph.objects(component, CubeAnalyzer.qb.measure):
+                    for row in graph.query(f'SELECT DISTINCT ?measure WHERE {{ <{component}> <http://purl.org/linked-data/cube#measure> ?measure }}'):
+                        measure = row['measure']
                         datasets[str(dataset)].measures.add(str(measure))
 
         d = {}
@@ -109,11 +114,66 @@ class SkosAnalyzer(AbstractAnalyzer):
     token = 'skos'
 
     def analyze(self, graph):
-        # pocet konceptu
-        # pocet schemat, jejich mohutnost
-        # top koncept dle schematu
-        # pocet kolekci, jejich mohutnost
-        pass
+        concept_count = dict()
+        schemes_count = dict()
+        top_concept = dict()
+
+        concepts = [row['concept'] for row in graph.query("""
+        SELECT DISTINCT ?concept WHERE {
+            ?concept a <http://www.w3.org/2004/02/skos/core#Concept>.
+        }
+        """)]
+
+        def count_query(concept):
+            return f'SELECT ?a (count(?a) as ?count) WHERE {{ ?a ?b <{concept}>. }}'
+
+        for c in concepts:
+            for row in graph.query(count_query(c)):
+                concept_count[c] = row['count']
+
+        schemes = [row['scheme'] for row in graph.query("""
+        SELECT DISTINCT ?scheme WHERE {
+            OPTIONAL {?scheme a <http://www.w3.org/2004/02/skos/core#Scheme>.}
+            OPTIONAL {?_ <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme.}
+        }
+        """)]
+
+        def scheme_count_query(scheme):
+            return f'SELECT (count(*) as ?count) WHERE {{ ?_ <http://www.w3.org/2004/02/skos/core#inScheme> <{scheme}> }}'
+
+        for schema in schemes:
+            for row in graph.query(scheme_count_query(schema)):
+                schemes_count[schema] = row['count']
+
+        def scheme_top_concept(scheme):
+            return f'SELECT ?concept WHERE {{ OPTIONAL {{ ?concept <http://www.w3.org/2004/02/skos/core#topConceptOf> <{scheme}>. }} OPTIONAL {{ <{scheme}> <http://www.w3.org/2004/02/skos/core#hasTopConcept> ?concept }} }}'
+
+        for schema in schemes:
+            top_concept[schema] = [row['concept'] for row in graph.query(scheme_top_concept(schema))]
+
+        collections = [row['coll'] for row in graph.query("""
+        SELECT DISTINCT ?coll WHERE {
+            OPTIONAL { ?coll a <http://www.w3.org/2004/02/skos/core#Collection>. }
+            OPTIONAL { ?coll a <http://www.w3.org/2004/02/skos/core#OrderedCollection>. }
+            OPTIONAL { ?_ <http://www.w3.org/2004/02/skos/core#member> ?coll. }
+            OPTIONAL { ?coll <http://www.w3.org/2004/02/skos/core#memberList> ?_. }
+        }
+        """)]
+
+        ord_collections = [row['coll'] for row in graph.query("""
+        SELECT DISTINCT ?coll WHERE {
+            ?coll a <http://www.w3.org/2004/02/skos/core#OrderedCollection>.
+        }
+        """)]
+
+        return {
+            'concept':  concept_count,
+            'schema': schemes_count,
+            'topConcepts': top_concept,
+            'collection': collections,
+            'orderedCollection': ord_collections
+        }
+
 
     def find_relation(self, graph):
         for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme}"):
@@ -150,14 +210,18 @@ class GenericAnalyzer(AbstractAnalyzer):
 
     def analyze(self, graph):
         """Basic graph analysis."""
-        triples = len(graph)
-        predicates_count = defaultdict(int)
-        classes_count = defaultdict(int)
+        predicates_count = dict()
+        classes_count = dict()
 
-        for s, p, o in graph:
-            predicates_count[p] = predicates_count[p] + 1
-            if p == RDF.type:
-                classes_count[o] = classes_count[o] + 1
+        triples = None
+        for row in graph.query("select (COUNT(*) as ?c) where { ?s ?p ?o}"):
+            triples = row['c']
+
+        for row in graph.query("SELECT ?p (COUNT(?p) AS ?count) WHERE { ?s ?p ?o . } GROUP BY ?p ORDER BY DESC(?count)"):
+            predicates_count[row['p']] = row['count']
+
+        for row in graph.query("SELECT ?c (COUNT(?c) AS ?count) WHERE { ?s a ?c . } GROUP BY ?c ORDER BY DESC(?count)"):
+            classes_count[row['c']] = row['count']
 
         summary = {
             'triples': triples,
@@ -170,6 +234,7 @@ class GenericAnalyzer(AbstractAnalyzer):
         for row in graph.query("SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b }"):
             yield row['a'], 'sameAs'
             yield row['b'], 'sameAs'
+
 
 class QbDataset(object):
     """Model for reporting DataCube dataset.

@@ -52,6 +52,7 @@ def analyze(iri, redis_url):
                           'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
                           'trix', 'trig', 'turtle', 'xml', 'json-ld']:
             log.info(f'Skipping this distribution')
+            red.sadd('stat:skipped', str(iri))
             return
 
         monitor.log_size(conlen)
@@ -61,7 +62,7 @@ def analyze(iri, redis_url):
             for chunk in r.iter_content(chunk_size=chsize):
                 if chunk:
                     red.append(key, chunk)
-            red.expire(key, 60*60)
+            red.expire(key, 30*24*60*60) #30D
 
         pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         return pipeline.delay()
@@ -84,8 +85,9 @@ def run_analyzer(iri, format_guess, redis_cfg):
 def store_analysis(results, iri, redis_cfg):
     red = redis.StrictRedis().from_url(redis_cfg)
     key_result = f'analyze:{iri!s}'
-    red.set(key_result, results)
+    red.set(key_result, json.dumps(results))
     red.expire(key_result, 30*24*60*60) #30D
+    red.expire(f'data:{iri!s}', 1) #trash original content
 
 
 @celery.task
@@ -130,8 +132,7 @@ def process_endpoint(iri, redis_cfg):
 @environment('REDIS')
 def analyze_endpoint(iri, redis_cfg):
     red = redis.StrictRedis().from_url(redis_cfg)
-    sg = SparqlGraph(iri)
-    g = sg.extract_graph() #TODO: refactor the analyze method to use SPARQL queries as well
+    g = SparqlGraph(iri)
     key = f'analyze:{iri!s}'
     analyzers = [it() for it in AbstractAnalyzer.__subclasses__()]
     red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
