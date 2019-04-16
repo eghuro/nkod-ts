@@ -51,7 +51,7 @@ def run_indexer(iri, g, r):
     cnt = 0
     for analyzer in [it() for it in AbstractAnalyzer.__subclasses__()]:
         for key, rel_type in analyzer.find_relation(g):
-            log.info(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
+            log.debug(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
             # pipe.sadd(f'related:{key!s}', iri)
             pipe.sadd(f'related:{rel_type!s}:{key!s}', iri)
             pipe.sadd(f'relationship', rel_type)

@@ -17,9 +17,9 @@ class CubeAnalyzer(AbstractAnalyzer):
     def find_relation(self, graph):
         """We consider DSs to be related if they share a resource on dimension."""
         log = logging.getLogger(__name__)
-        log.info('Looking up resources used on a dimension')
+        log.debug('Looking up resources used on a dimension')
         for ds, resource in self.__resource_on_dimension(graph):
-            log.info(f'Dataset: {ds} - Resource on dimension: {resource}')
+            log.debug(f'Dataset: {ds} - Resource on dimension: {resource}')
             yield resource, 'qb'
 
     def __dimensions(self, graph):
@@ -55,9 +55,9 @@ class CubeAnalyzer(AbstractAnalyzer):
 
     def __resource_on_dimension(self, graph):
         log = logging.getLogger(__name__)
-        log.info('Looking up resources on dimensions')
+        log.debug('Looking up resources on dimensions')
         ds_dimensions = self.__dataset_dimensions(graph, self.__dimensions(graph))
-        log.info(f'Dimensions: {ds_dimensions!s}')
+        log.debug(f'Dimensions: {ds_dimensions!s}')
 
         ds_query = """
             SELECT ?observation ?dataset
@@ -127,12 +127,11 @@ class SkosAnalyzer(AbstractAnalyzer):
     def _scheme_top_concept(scheme):
         q = """
         SELECT ?concept WHERE {
-            OPTIONAL { ?concept <http://www.w3.org/2004/02/skos/core#topConceptOf> <
-        """ + scheme + """
-            >. }
-            OPTIONAL { <
-        """ + scheme + """
-            > <http://www.w3.org/2004/02/skos/core#hasTopConcept> ?concept }
+            OPTIONAL { ?concept <http://www.w3.org/2004/02/skos/core#topConceptOf>
+        """ + f'<{scheme}>.}}' + """
+            OPTIONAL {
+        """ + f'<{scheme}>' + """
+            <http://www.w3.org/2004/02/skos/core#hasTopConcept> ?concept }
         }
         """
         return q
