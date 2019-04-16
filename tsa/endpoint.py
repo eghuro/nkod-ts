@@ -1,4 +1,6 @@
 """SPARQL endpoint utilities."""
+import logging
+
 import redis
 from atenvironment import environment
 from rdflib import Graph
@@ -13,6 +15,7 @@ class SparqlGraph(object):
     def __init__(self, endpoint):
         """Connect to the endpoint."""
         if not robots_cache.allowed(endpoint):
+            log = logging.getLogger(__name__)
             log.warn(f'Not allowed to query {endpoint!s} as {user_agent!s} by robots.txt')
 
         self.__sparql = SPARQLWrapper(endpoint, returnFormat=N3, agent=user_agent)

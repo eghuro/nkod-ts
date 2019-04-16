@@ -30,6 +30,9 @@ class Config(object):
         'release': RELEASE,
     }
 
+    MAX_CONTENT_LENGTH = 1024 * 1024 * 1024
+    DEFAULT_EXPIRE = 30 * 24 * 60 * 60  # 30D
+
 
 class ProdConfig(Config):
     """Production configuration."""

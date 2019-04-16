@@ -163,15 +163,22 @@ def known_distributions(redis_url):
 
 
 def skip(iri, r):
+    """Condition if iri should be skipped from gathering analyses."""
     key = f'analyze:{iri!s}'
-    return r.sismember('stat:failed', iri) or r.sismember('stat:skipped', iri) or not rfc3987.match(iri) or not r.exists(key)
+    return r.sismember('stat:failed', iri) or\
+        r.sismember('stat:skipped', iri) or\
+        not rfc3987.match(iri) or\
+        not r.exists(key)
 
 
 def missing(iri, r):
+    """Condition if index query result is missing."""
+    key = f'distrquery:{iri!s}'
     return not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri)
 
 
 def gather_analyses(iris, r):
+    """Compile analyses for all iris from all analyzers."""
     analyses = []
     predicates = defaultdict(int)
     classes = defaultdict(int)
@@ -202,9 +209,9 @@ def gather_analyses(iris, r):
 
 
 def fetch_missing(iris, r):
+    """Trigger index distribution query where needed."""
     missing_query = []
     for iri in iris:
-        key = f'distrquery:{iri!s}'
         if missing(iri, r):
             current_app.logger.debug(f'Missing index query result for {iri!s}')
             missing_query.append(iri)
@@ -214,6 +221,7 @@ def fetch_missing(iris, r):
 
 
 def gather_queries(iris, r):
+    """Compile queries for all iris."""
     current_app.logger.info('Appending results')
     for iri in iris:
         key = f'distrquery:{iri!s}'
@@ -242,7 +250,6 @@ def batch_analysis(redis_url):
     Get a list of distributions in request body as JSON, compile analyses,
     query the index return the compiled report.
     """
-
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     analyses, predicates, classes = gather_analyses(request.get_json(), r)
     fetch_missing(request.get_json(), r)
