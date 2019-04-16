@@ -8,8 +8,6 @@ from collections import defaultdict
 class AbstractAnalyzer(ABC):
     """Abstract base class allowing to fetch all available analyzers on runtime."""
 
-    pass
-
 
 class CubeAnalyzer(AbstractAnalyzer):
     """RDF dataset analyzer focusing on DataCube."""

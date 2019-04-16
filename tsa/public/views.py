@@ -54,6 +54,8 @@ def api_analyze_get(redis_url):
             abort(404)
         else:
             return jsonify(json.loads(r.get(key)))
+    else:
+        abort(400)
 
 
 @blueprint.route('/api/v1/analyze/distribution', methods=['POST'])
