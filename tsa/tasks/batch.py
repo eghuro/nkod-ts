@@ -33,7 +33,7 @@ def inspect_catalog(iri, redis_cfg):
             analyze.si(str(access)).delay()
     for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
         for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
-            log.debug(f'Scheduling analysis of {access!s}')
+            log.debug(f'Scheduling analysis of {dump!s}')
             analyze.si(str(dump)).delay()
         for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
             log.debug(f'Scheduling analysis of {endpoint!s}')
