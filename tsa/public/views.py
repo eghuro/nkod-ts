@@ -162,6 +162,77 @@ def known_distributions(redis_url):
     return jsonify(list(distr_endpoints.difference(failed_skipped)))
 
 
+def skip(iri, r):
+    key = f'analyze:{iri!s}'
+    return r.sismember('stat:failed', iri) or r.sismember('stat:skipped', iri) or not rfc3987.match(iri) or not r.exists(key)
+
+
+def missing(iri, r):
+    return not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri)
+
+
+def gather_analyses(iris, r):
+    analyses = []
+    predicates = defaultdict(int)
+    classes = defaultdict(int)
+
+    for iri in request.get_json():
+        if skip(r, iri):
+            continue
+        key = f'analyze:{iri!s}'
+        x = json.loads(r.get(key))
+        analyses_red = []
+        for y in x:
+            analyses_red.append(json.loads(y))
+        for analysis in analyses_red:  # from several analyzers
+            if analysis is None:
+                continue
+            if 'predicates' in analysis:
+                for p in analysis['predicates']:
+                    predicates[p] += int(analysis['predicates'][p])
+            if 'classes' in analysis:
+                for c in analysis['classes']:
+                    classes[c] += int(analysis['classes'][c])
+            analyses.append({'iri': iri, 'analysis': analysis})
+
+    analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
+    analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
+
+    return analyses, predicates, classes
+
+
+def fetch_missing(iris, r):
+    missing_query = []
+    for iri in iris:
+        key = f'distrquery:{iri!s}'
+        if missing(iri, r):
+            current_app.logger.debug(f'Missing index query result for {iri!s}')
+            missing_query.append(iri)
+
+    current_app.logger.info('Fetching missing query results')
+    group(index_distribution_query.si(iri) for iri in missing_query).apply_async().get()
+
+
+def gather_queries(iris, r):
+    current_app.logger.info('Appending results')
+    for iri in iris:
+        key = f'distrquery:{iri!s}'
+        if missing(r, iri):
+            current_app.logger.warn(f'Missing index query result for {iri!s}')
+        else:
+            related = r.get(key)
+
+            if related is not None:
+                rel_json = json.loads(related)
+            else:
+                rel_json = {}
+
+            yield {
+                'iri': iri,
+                'related': rel_json
+            }
+
+
 @blueprint.route('/api/v1/query/analysis', methods=['POST'])
 @environment('REDIS')
 def batch_analysis(redis_url):
@@ -171,60 +242,9 @@ def batch_analysis(redis_url):
     Get a list of distributions in request body as JSON, compile analyses,
     query the index return the compiled report.
     """
-    analyses = []
-    predicates = defaultdict(int)
-    classes = defaultdict(int)
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    for iri in request.get_json():
-        if r.sismember('stat:failed', iri) or r.sismember('stat:skipped', iri):
-            continue
-        if rfc3987.match(iri):
-            key = f'analyze:{iri!s}'
-            if r.exists(key):
-                x = json.loads(r.get(key))
-                analyses_red = []
-                for y in x:
-                    analyses_red.append(json.loads(y))
-                for analysis in analyses_red:  # from several analyzers
-                    if analysis is None:
-                        continue
-                    if 'predicates' in analysis:
-                        for p in analysis['predicates']:
-                            predicates[p] += int(analysis['predicates'][p])
-                    if 'classes' in analysis:
-                        for c in analysis['classes']:
-                            classes[c] += int(analysis['classes'][c])
-                    analyses.append({'iri': iri, 'analysis': analysis})
-    analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
-    analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
-
-    missing_query = []
-    for iri in request.get_json():
-        key = f'distrquery:{iri!s}'
-        if not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri):
-            current_app.logger.warn(f'Missing index query result for {iri!s}')
-            missing_query.append(iri)
-
-    current_app.logger.info('Fetching missing query results')
-    group(index_distribution_query.si(iri) for iri in missing_query).apply_async().get()
-
-    current_app.logger.info('Appending results')
-    for iri in request.get_json():
-        key = f'distrquery:{iri!s}'
-        if not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri):
-            current_app.logger.warn(f'Missing index query result for {iri!s}')
-        else:
-            related = r.get(key)
-
-            if related is not None:
-                rel_json = json.loads(related)
-            else:
-                rel_json = None
-
-            analyses.append({
-                'iri': iri,
-                'related': rel_json
-            })
-
+    analyses, predicates, classes = gather_analyses(request.get_json(), r)
+    fetch_missing(request.get_json(), r)
+    analyses.extend(x for x in gather_queries(request.get_json(), r))
     return jsonify(analyses)
