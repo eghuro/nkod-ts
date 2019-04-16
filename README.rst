@@ -2,7 +2,14 @@
 NKOD TSA
 ===============================
 
-Time series analysis service for NKOD.
+Indexing linked data and relationships between datasets.
+
+Features:
+ - index a distribution or a SPARQL endpoint
+ - extract and index distributions from a DCAT catalog
+ - extract a DCAT catalog from SPARQL endpoint and index distributions from it
+ - generate a dataset profile
+ - show related datasets based mainly on DataCube and SKOS vocabularies
 
 
 Build & run with Docker
