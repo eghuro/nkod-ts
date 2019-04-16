@@ -24,12 +24,17 @@ class RobotsRetry(BaseException):
         self.delay = delay
 
 
+class Skip(BaseException):
+    """Exception indicating we have to skip this distribution."""
+
+
 @celery.task(bind=True)
 @environment('REDIS')
 def analyze(self, iri, redis_url):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     red = redis.StrictRedis().from_url(redis_url)
+
     key = f'distributions'
     if red.sadd(key, iri) == 0:
         log.debug(f'Skipping distribution as it was recently analyzed: {iri!s}')
@@ -49,43 +54,56 @@ def analyze(self, iri, redis_url):
         except RobotsRetry as e:
             raise self.retry(e.delay)
 
-        if 'Content-Length' in r.headers.keys():
-            conlen = int(r.headers.get('Content-Length'))
-            if conlen > 1024 * 1024 * 1024:
-                log.error(f'Skipping as distribution file is too large: {conlen!s}')
-                return {}
-        else:
-            conlen = None
+        try:
+            test_content_length(t, log)
+            guess = guess_format(guess, r, log, red)
+        except Skip:
+            return {}
 
-        if guess is None:
-            guess = r.headers.get('content-type')
-        monitor.log_format(str(guess))
-        log.info(f'Guessing format to be {guess!s}')
-
-        if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
-                         'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
-                         'trix', 'trig', 'turtle', 'xml', 'json-ld']:
-            log.info(f'Skipping this distribution')
-            red.sadd('stat:skipped', str(iri))
-            return
-
-        key = f'data:{iri!s}'
-        if not red.exists(key):
-            chsize = 1024
-            conlen = 0
-            for chunk in r.iter_content(chunk_size=chsize):
-                if chunk:
-                    red.append(key, chunk)
-                    conlen = conlen + len(chunk)
-            red.expire(key, 30 * 24 * 60 * 60)  # 30D
-            monitor.log_size(conlen)
-
+        store_content(r, red)
         pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         return pipeline.delay()
     except:
         log.exception(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
         return {}
+
+
+def test_content_length(r, log):
+    if 'Content-Length' in r.headers.keys():
+        conlen = int(r.headers.get('Content-Length'))
+        if conlen > 1024 * 1024 * 1024:
+            log.error(f'Skipping as distribution file is too large: {conlen!s}')
+            raise Skip()
+
+
+def guess_format(guess, r, log, red):
+    if guess is None:
+        guess = r.headers.get('content-type')
+    monitor.log_format(str(guess))
+    log.info(f'Guessing format to be {guess!s}')
+
+    if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
+                     'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
+                     'trix', 'trig', 'turtle', 'xml', 'json-ld']:
+        log.info(f'Skipping this distribution')
+        red.sadd('stat:skipped', str(iri))
+        raise Skip()
+
+    return guess
+
+
+def store_content(r, red):
+    key = f'data:{iri!s}'
+    if not red.exists(key):
+        chsize = 1024
+        conlen = 0
+        for chunk in r.iter_content(chunk_size=chsize):
+            if chunk:
+                red.append(key, chunk)
+                conlen = conlen + len(chunk)
+        red.expire(key, 30 * 24 * 60 * 60)  # 30D
+        monitor.log_size(conlen)
 
 
 def fetch(iri):
