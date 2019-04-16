@@ -7,6 +7,7 @@ import redis
 import requests
 from atenvironment import environment
 from celery import chord, group
+from reppy.robots import Robots
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
@@ -17,9 +18,15 @@ from tsa.tasks.index import index, index_endpoint
 
 
 
-@celery.task
+class RobotsRetry(BaseException):
+    """Exception indicating retry is neeeded because of crawl delay"""
+    def __init__(self, delay):
+        self.delay = delay
+
+
+@celery.task(bind=True)
 @environment('REDIS')
-def analyze(iri, redis_url):
+def analyze(self, iri, redis_url):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
     red = redis.StrictRedis().from_url(redis_url)
@@ -37,11 +44,10 @@ def analyze(iri, redis_url):
 
     guess = rdflib.util.guess_format(iri)
     try:
-        if not robots_cache.allowed(iri):
-            log.warn(f'Not allowed to fetch {iri!s} as {user_agent!s}')
-
-        r = requests.get(iri, stream=True, headers={"User-Agent": user_agent})
-        r.raise_for_status()
+        try:
+            r = fetch(iri)
+        except RobotsRetry as e:
+            raise self.retry(e.delay)
 
         if 'Content-Length' in r.headers.keys():
             conlen = int(r.headers.get('Content-Length'))
@@ -80,6 +86,34 @@ def analyze(iri, redis_url):
         log.exception(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
         return {}
+
+
+def fetch(iri):
+    if not robots_cache.allowed(iri):
+        log.warn(f'Not allowed to fetch {iri!s} as {user_agent!s}')
+    else:
+        key = "delay_" + Robots.robots_url(iri)
+        wait = red.ttl(key)
+        if wait > 0:
+            log.info(f'Analyze {irl} in {wait} because of crawl-delay')
+            raise RobotsRetry(wait)
+
+    r = requests.get(iri, stream=True, headers={"User-Agent": user_agent})
+    r.raise_for_status()
+
+    delay = robots_cache.get(iri).delay
+    if delay is not None:
+        log.info(f'Recording crawl-delay of {delay} for {iri}'')
+        try:
+            delay = int(delay)
+        except:
+            log.error("Invalid delay value - couldn't covert to int")
+        else:
+            try:
+                r.set(key, True)
+                r.expire(key, delay)
+            except redis.exceptions.ResponseError:
+                log.error(f'Failed to set crawl-delay for {url}: {delay}')
 
 
 @celery.task
