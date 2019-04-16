@@ -50,7 +50,7 @@ def analyze(self, iri, redis_url):
 
     try:
         try:
-            r = fetch(iri, log)
+            r = fetch(iri, log, red)
         except RobotsRetry as e:
             raise self.retry(e.delay)
 
@@ -137,10 +137,11 @@ def fetch(iri, log, red):
             log.error('Invalid delay value - could not convert to int')
         else:
             try:
-                r.set(key, True)
-                r.expire(key, delay)
+                red.set(key, 1)
+                red.expire(key, delay)
             except redis.exceptions.ResponseError:
                 log.error(f'Failed to set crawl-delay for {iri}: {delay}')
+    return r
 
 
 @celery.task
