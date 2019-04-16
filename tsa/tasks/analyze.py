@@ -6,12 +6,12 @@ import rdflib
 import redis
 import requests
 from atenvironment import environment
-from celery import group, chord
+from celery import chord, group
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
-from tsa.monitor import monitor
 from tsa.endpoint import SparqlGraph
+from tsa.monitor import monitor
 from tsa.tasks.index import index, index_endpoint
 
 
@@ -25,7 +25,7 @@ def analyze(iri, redis_url):
     if red.sadd(key, iri) == 0:
         log.debug(f'Skipping distribution as it was recently analyzed: {iri!s}')
         return
-    red.expire(key, 30*24*60*60)
+    red.expire(key, 30 * 24 * 60 * 60)
 
     log.info(f'Analyzing {iri!s}')
 
@@ -49,8 +49,8 @@ def analyze(iri, redis_url):
         log.info(f'Guessing format to be {guess!s}')
 
         if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
-                          'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
-                          'trix', 'trig', 'turtle', 'xml', 'json-ld']:
+                         'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
+                         'trix', 'trig', 'turtle', 'xml', 'json-ld']:
             log.info(f'Skipping this distribution')
             red.sadd('stat:skipped', str(iri))
             return
@@ -62,7 +62,7 @@ def analyze(iri, redis_url):
             for chunk in r.iter_content(chunk_size=chsize):
                 if chunk:
                     red.append(key, chunk)
-            red.expire(key, 30*24*60*60) #30D
+            red.expire(key, 30 * 24 * 60 * 60)  # 30D
 
         pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         return pipeline.delay()
@@ -83,16 +83,18 @@ def run_analyzer(iri, format_guess, redis_cfg):
 
 @celery.task
 def store_analysis(results, iri, redis_cfg):
+    """Store results of the analysis in redis."""
     red = redis.StrictRedis().from_url(redis_cfg)
     key_result = f'analyze:{iri!s}'
     red.set(key_result, json.dumps(results))
-    red.expire(key_result, 30*24*60*60) #30D
-    red.expire(f'data:{iri!s}', 1) #trash original content
+    red.expire(key_result, 30 * 24 * 60 * 60)  # 30D
+    red.expire(f'data:{iri!s}', 1)  # trash original content
 
 
 @celery.task
 @environment('REDIS')
 def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
+    """Run one analyzer identified by its token."""
     log = logging.getLogger(__name__)
     analyzer = getAnalyzer(analyzer_token)
 
@@ -108,6 +110,7 @@ def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
 
 
 def getAnalyzer(analyzer_token):
+    """Retrieve an analyzer identified by its token."""
     for a in AbstractAnalyzer.__subclasses__():
         if a.token == analyzer_token:
             return a()
@@ -117,12 +120,13 @@ def getAnalyzer(analyzer_token):
 @celery.task
 @environment('REDIS')
 def process_endpoint(iri, redis_cfg):
+    """Index and analyze triples in the endpoint."""
     red = redis.StrictRedis().from_url(redis_cfg)
     key = f'endpoints'
     if red.sadd(key, iri) > 0:
         # run analyzer and indexer on the endpoint instead of parsing the graph
         group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
-        red.expire(key, 30*24*60*60) #30D
+        red.expire(key, 30 * 24 * 60 * 60)  # 30D
     else:
         log = logging.getLogger(__name__)
         log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
@@ -131,9 +135,10 @@ def process_endpoint(iri, redis_cfg):
 @celery.task
 @environment('REDIS')
 def analyze_endpoint(iri, redis_cfg):
+    """Analyze triples in the endpoint."""
     red = redis.StrictRedis().from_url(redis_cfg)
     g = SparqlGraph(iri)
     key = f'analyze:{iri!s}'
     analyzers = [it() for it in AbstractAnalyzer.__subclasses__()]
     red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
-    red.expire(key, 30*24*60*60) #30D
+    red.expire(key, 30 * 24 * 60 * 60)  # 30D

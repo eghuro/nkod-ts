@@ -1,29 +1,28 @@
-from SPARQLWrapper import SPARQLWrapper, N3
-from rdflib import Graph, ConjunctiveGraph
-from rdflib.namespace import RDF
-import rdflib
-from atenvironment import environment
+"""SPARQL endpoint utilities."""
 import redis
+from atenvironment import environment
+from rdflib import Graph
+from SPARQLWrapper import N3, SPARQLWrapper
 
 
 class SparqlGraph(object):
+    """Wrapper around SPARQL endpoint providing rdflib.Graph-like querying API."""
 
     def __init__(self, endpoint):
+        """Connect to the endpoint."""
         self.__sparql = SPARQLWrapper(endpoint, returnFormat=N3)
 
     def query(self, query_str):
+        """Query the endpoint and parse the result graph."""
         self.__sparql.setQuery(query_str)
         results = self.__sparql.query().convert()
         g = Graph()
-        g.parse(data=results, format="n3")
+        g.parse(data=results, format='n3')
         return g.query(query_str)
 
 
 class SparqlEndpointAnalyzer(object):
-
-    @environment('REDIS')
-    def __init__(self, redis_url):
-        r = redis.StrictRedis().from_url(redis_url)
+    """Extract DCAT datasets from a SPARQL endpoint."""
 
     def __query(self, endpoint):
         str1 = """
@@ -92,17 +91,20 @@ class SparqlEndpointAnalyzer(object):
          }
        }
        """
-        return  str1 + "<" + endpoint + ">." + str2
+        return f'{str1} <{endpoint}>. {str2}'
 
-    def peek_endpoint(self, endpoint):
+    @environment('REDIS')
+    def peek_endpoint(self, endpoint, redis_url):
+        """Extract DCAT datasets from the given endpoint and store them in redis."""
         sparql = SPARQLWrapper(endpoint, returnFormat=N3)
         sparql.setQuery(self.__query(endpoint))
 
         ret = sparql.query().convert()
         g = Graph()
-        g.parse(data=ret, format="n3")
+        g.parse(data=ret, format='n3')
 
+        r = redis.StrictRedis().from_url(redis_url)
         key = f'data:{endpoint!s}'
         r.set(key, g.serialize(format='turtle'))
-        r.expire(key, 60*60)
+        r.expire(key, 30 * 24 * 60 * 60)  # 30D
         return key

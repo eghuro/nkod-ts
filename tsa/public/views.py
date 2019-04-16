@@ -2,20 +2,19 @@
 """Public section, including homepage and signup."""
 import json
 import logging
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
 
 import redis
 import rfc3987
 from atenvironment import environment
-from flask import Blueprint, abort, current_app, jsonify, request
 from celery import group
+from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
 from tsa.tasks.analyze import analyze, process_endpoint
 from tsa.tasks.batch import inspect_catalog, inspect_endpoint
-from tsa.tasks.query import index_query, index_distribution_query
+from tsa.tasks.query import index_distribution_query, index_query
 from tsa.tasks.system import hello, system_check
-
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -46,7 +45,7 @@ def test_system():
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
 def api_analyze_get(redis_url):
-    """Read analysis"""
+    """Read the analysis."""
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     iri = request.args.get('iri', None)
     if rfc3987.match(iri):
@@ -66,7 +65,7 @@ def api_analyze_iri():
         current_app.logger.info(f'Analyzing distribution for: {iri}')
         if rfc3987.match(iri):
             analyze.delay(iri)
-            return "OK"
+            return 'OK'
         else:
             abort(400)
     else:
@@ -77,7 +76,7 @@ def api_analyze_iri():
         for iri in iris:
             current_app.logger.info(f'Analyzing distribution for: {iri}')
             analyze.delay(iri)
-        return "OK"
+        return 'OK'
 
 
 @blueprint.route('/api/v1/analyze/endpoint', methods=['POST'])
@@ -89,7 +88,7 @@ def api_analyze_endpoint():
 
     if rfc3987.match(iri):
         (process_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
-        return "OK"
+        return 'OK'
     else:
         abort(400)
 
@@ -102,7 +101,7 @@ def api_analyze_catalog():
         current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
         if rfc3987.match(iri):
             (inspect_catalog.si(iri) | index_distribution_query.si(iri)).apply_async()
-            return "OK"
+            return 'OK'
         else:
             abort(400)
     elif 'sparql' in request.args:
@@ -110,7 +109,7 @@ def api_analyze_catalog():
         current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
         if rfc3987.match(iri):
             (inspect_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
-            return "OK"
+            return 'OK'
         else:
             abort(400)
     else:
@@ -162,27 +161,38 @@ def distr_index(redis_url):
 @blueprint.route('/api/v1/stat/format', methods=['GET'])
 @environment('REDIS')
 def stat_format(redis_url):
+    """List distribution formats logged."""
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(r.hgetall("stat:format"))
+    return jsonify(r.hgetall('stat:format'))
 
 
 @blueprint.route('/api/v1/stat/failed', methods=['GET'])
 @environment('REDIS')
 def stat_failed(redis_url):
+    """List failed distributions."""
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(list(r.smembers("stat:failed")))
+    return jsonify(list(r.smembers('stat:failed')))
 
 
 @blueprint.route('/api/v1/query/analysis', methods=['GET'])
 @environment('REDIS')
 def known_distributions(redis_url):
+    """List known distributions and endpoints without failed or skipped ones."""
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(list((r.smembers('distributions').union(r.smembers('endpoints')).difference(r.smembers('stat:failed').union(r.smembers('stat:skipped'))))))
+    distr_endpoints = r.smembers('distributions').union(r.smembers('endpoints'))
+    failed_skipped = r.smembers('stat:failed').union(r.smembers('stat:skipped'))
+    return jsonify(list(distr_endpoints.difference(failed_skipped)))
 
 
 @blueprint.route('/api/v1/query/analysis', methods=['POST'])
 @environment('REDIS')
 def batch_analysis(redis_url):
+    """
+    Get a big report for all required distributions.
+
+    Get a list of distributions in request body as JSON, compile analyses,
+    query the index return the compiled report.
+    """
     analyses = []
     predicates = defaultdict(int)
     classes = defaultdict(int)
@@ -198,7 +208,7 @@ def batch_analysis(redis_url):
                 analyses_red = []
                 for y in x:
                     analyses_red.append(json.loads(y))
-                for analysis in analyses_red: #from several analyzers
+                for analysis in analyses_red:  # from several analyzers
                     if analysis is None:
                         continue
                     if 'predicates' in analysis:
@@ -207,7 +217,7 @@ def batch_analysis(redis_url):
                     if 'classes' in analysis:
                         for c in analysis['classes']:
                             classes[c] += int(analysis['classes'][c])
-                    analyses.append({'iri':iri, 'analysis': analysis})
+                    analyses.append({'iri': iri, 'analysis': analysis})
     analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
     analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
 

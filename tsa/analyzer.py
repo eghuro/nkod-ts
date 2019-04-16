@@ -1,14 +1,13 @@
 """Dataset analyzer."""
 
-from abc import ABC
 import logging
+from abc import ABC
 from collections import defaultdict
-
-from rdflib import Namespace
-from rdflib.namespace import RDF
 
 
 class AbstractAnalyzer(ABC):
+    """Abstract base class allowing to fetch all available analyzers on runtime."""
+
     pass
 
 
@@ -72,27 +71,31 @@ class CubeAnalyzer(AbstractAnalyzer):
         qres0 = graph.query(ds_query)
         for row in qres0:
             for dimension in ds_dimensions[row.dataset]:
-                qb_query = "SELECT ?resource WHERE { <" + str(row.observation) + "> <" + str(dimension) + "> ?resource. }"
+                qb_query = f'SELECT ?resource WHERE {{ <{row.observation!s}> <{dimension!s}> ?resource. }}'
                 qres1 = graph.query(qb_query)
                 for row1 in qres1:
                     yield row.dataset, row1.resource
 
     def analyze(self, graph):
         """Analysis of a datacube."""
-
         datasets = defaultdict(QbDataset)
 
-        for row in graph.query("SELECT DISTINCT ?ds WHERE {?ds a <http://purl.org/linked-data/cube#DataSet>}"):
+        prefix = 'http://purl.org/linked-data/cube#'
+        for row in graph.query(f'SELECT DISTINCT ?ds WHERE {{?ds a <{prefix}DataSet>}}'):
             dataset = row['ds']
-            for row in graph.query(f'SELECT DISTINCT ?structure WHERE {{ <{dataset}> <http://purl.org/linked-data/cube#structure> ?structure }}'):
+            qa = f'SELECT DISTINCT ?structure WHERE {{ <{dataset}> <{prefix}structure> ?structure }}'
+            for row in graph.query(qa):
                 structure = row['structure']
-                for row in graph.query(f'SELECT DISTINCT ?component WHERE {{ <{structure}> <http://purl.org/linked-data/cube#component> ?component }}'):
+                qb = f'SELECT DISTINCT ?component WHERE {{ <{structure}> <{prefix}component> ?component }}'
+                for row in graph.query(qb):
                     component = row['component']
 
-                    for row in graph.query(f'SELECT DISTINCT ?dimension WHERE {{ <{component}> <http://purl.org/linked-data/cube#dimension> ?dimension }}'):
+                    qc = f'SELECT DISTINCT ?dimension WHERE {{ <{component}> <{prefix}dimension> ?dimension }}'
+                    for row in graph.query(qc):
                         dimension = row['dimension']
                         datasets[str(dataset)].dimensions.add(str(dimension))
-                    for row in graph.query(f'SELECT DISTINCT ?measure WHERE {{ <{component}> <http://purl.org/linked-data/cube#measure> ?measure }}'):
+                    qd = f'SELECT DISTINCT ?measure WHERE {{ <{component}> <{prefix}measure> ?measure }}'
+                    for row in graph.query(qd):
                         measure = row['measure']
                         datasets[str(dataset)].measures.add(str(measure))
 
@@ -110,10 +113,34 @@ class CubeAnalyzer(AbstractAnalyzer):
 
 
 class SkosAnalyzer(AbstractAnalyzer):
+    """RDF dataset analyzer focusing on SKOS."""
 
     token = 'skos'
 
+    @staticmethod
+    def _scheme_count_query(scheme):
+        return f'SELECT (count(*) as ?count) WHERE {{ ?_ <http://www.w3.org/2004/02/skos/core#inScheme> <{scheme}> }}'
+
+    @staticmethod
+    def _count_query(concept):
+        return f'SELECT ?a (count(?a) as ?count) WHERE {{ ?a ?b <{concept}>. }}'
+
+    @staticmethod
+    def _scheme_top_concept(scheme):
+        q = """
+        SELECT ?concept WHERE {
+            OPTIONAL { ?concept <http://www.w3.org/2004/02/skos/core#topConceptOf> <
+        """ + scheme + """
+            >. }
+            OPTIONAL { <
+        """ + scheme + """
+            > <http://www.w3.org/2004/02/skos/core#hasTopConcept> ?concept }
+        }
+        """
+        return q
+
     def analyze(self, graph):
+        """Analysis of SKOS concepts and related properties presence in a dataset."""
         concept_count = dict()
         schemes_count = dict()
         top_concept = dict()
@@ -124,11 +151,8 @@ class SkosAnalyzer(AbstractAnalyzer):
         }
         """)]
 
-        def count_query(concept):
-            return f'SELECT ?a (count(?a) as ?count) WHERE {{ ?a ?b <{concept}>. }}'
-
         for c in concepts:
-            for row in graph.query(count_query(c)):
+            for row in graph.query(SkosAnalyzer._count_query(c)):
                 concept_count[c] = row['count']
 
         schemes = [row['scheme'] for row in graph.query("""
@@ -138,18 +162,12 @@ class SkosAnalyzer(AbstractAnalyzer):
         }
         """)]
 
-        def scheme_count_query(scheme):
-            return f'SELECT (count(*) as ?count) WHERE {{ ?_ <http://www.w3.org/2004/02/skos/core#inScheme> <{scheme}> }}'
-
         for schema in schemes:
-            for row in graph.query(scheme_count_query(schema)):
+            for row in graph.query(SkosAnalyzer._scheme_count_query(schema)):
                 schemes_count[schema] = row['count']
 
-        def scheme_top_concept(scheme):
-            return f'SELECT ?concept WHERE {{ OPTIONAL {{ ?concept <http://www.w3.org/2004/02/skos/core#topConceptOf> <{scheme}>. }} OPTIONAL {{ <{scheme}> <http://www.w3.org/2004/02/skos/core#hasTopConcept> ?concept }} }}'
-
         for schema in schemes:
-            top_concept[schema] = [row['concept'] for row in graph.query(scheme_top_concept(schema))]
+            top_concept[schema] = [row['concept'] for row in graph.query(SkosAnalyzer._scheme_top_concept(schema))]
 
         collections = [row['coll'] for row in graph.query("""
         SELECT DISTINCT ?coll WHERE {
@@ -167,19 +185,29 @@ class SkosAnalyzer(AbstractAnalyzer):
         """)]
 
         return {
-            'concept':  concept_count,
+            'concept': concept_count,
             'schema': schemes_count,
             'topConcepts': top_concept,
             'collection': collections,
             'orderedCollection': ord_collections
         }
 
-
     def find_relation(self, graph):
-        for row in graph.query("SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme}"):
+        """Lookup relationships based on SKOS vocabularies.
+
+        Datasets are related if they share a resources that are:
+            - in the same skos:scheme
+            - in the same skos:collection
+            - skos:exactMatch
+            - related by skos:related, skos:semanticRelation, skos:broader,
+        skos:broaderTransitive, skos:narrower, skos:narrowerTransitive
+        """
+        q = 'SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme}'
+        for row in graph.query(q):
             yield row['scheme'], 'inScheme'
 
-        for row in graph.query("SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/core#member> ?a}"):
+        q = 'SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/core#member> ?a}'
+        for row in graph.query(q):
             yield row['collection'], 'collection'
 
         for row in graph.query("""
@@ -205,6 +233,7 @@ class SkosAnalyzer(AbstractAnalyzer):
 
 
 class GenericAnalyzer(AbstractAnalyzer):
+    """Basic RDF dataset analyzer inspecting general properties not related to any particular vocabulary."""
 
     token = 'generic'
 
@@ -214,13 +243,14 @@ class GenericAnalyzer(AbstractAnalyzer):
         classes_count = dict()
 
         triples = None
-        for row in graph.query("select (COUNT(*) as ?c) where { ?s ?p ?o}"):
+        for row in graph.query('select (COUNT(*) as ?c) where { ?s ?p ?o}'):
             triples = row['c']
 
-        for row in graph.query("SELECT ?p (COUNT(?p) AS ?count) WHERE { ?s ?p ?o . } GROUP BY ?p ORDER BY DESC(?count)"):
+        q = 'SELECT ?p (COUNT(?p) AS ?count) WHERE { ?s ?p ?o . } GROUP BY ?p ORDER BY DESC(?count)'
+        for row in graph.query(q):
             predicates_count[row['p']] = row['count']
 
-        for row in graph.query("SELECT ?c (COUNT(?c) AS ?count) WHERE { ?s a ?c . } GROUP BY ?c ORDER BY DESC(?count)"):
+        for row in graph.query('SELECT ?c (COUNT(?c) AS ?count) WHERE { ?s a ?c . } GROUP BY ?c ORDER BY DESC(?count)'):
             classes_count[row['c']] = row['count']
 
         summary = {
@@ -231,7 +261,8 @@ class GenericAnalyzer(AbstractAnalyzer):
         return summary
 
     def find_relation(self, graph):
-        for row in graph.query("SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b }"):
+        """Two distributions are related if they share resources that are owl:sameAs."""
+        for row in graph.query('SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b }'):
             yield row['a'], 'sameAs'
             yield row['b'], 'sameAs'
 

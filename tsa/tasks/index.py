@@ -13,6 +13,7 @@ from tsa.endpoint import SparqlGraph
 @celery.task
 @environment('REDIS')
 def index_endpoint(iri, redis_cfg):
+    """Index related resources in an endpoint by initializing a SparqlGraph."""
     g = SparqlGraph(iri)
     r = redis.StrictRedis.from_url(redis_cfg)
     return run_indexer(None, g, r)
@@ -41,6 +42,7 @@ def index(iri, format_guess, redis_cfg):
 
 
 def run_indexer(iri, g, r):
+    """Get all available analyzers and let them find relationships."""
     log = logging.getLogger(__name__)
     pipe = r.pipeline()
     exp = 30 * 24 * 60 * 60  # 30D
@@ -50,13 +52,13 @@ def run_indexer(iri, g, r):
     for analyzer in [it() for it in AbstractAnalyzer.__subclasses__()]:
         for key, rel_type in analyzer.find_relation(g):
             log.info(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
-            #pipe.sadd(f'related:{key!s}', iri)
+            # pipe.sadd(f'related:{key!s}', iri)
             pipe.sadd(f'related:{rel_type!s}:{key!s}', iri)
             pipe.sadd(f'relationship', rel_type)
             pipe.sadd(f'key:{iri!s}', key)
             pipe.sadd(f'reltype:{iri!s}', rel_type)
 
-            #pipe.expire(f'related:{key!s}', exp)
+            # pipe.expire(f'related:{key!s}', exp)
             pipe.expire(f'related:{rel_type!s}:{key!s}', exp)
             pipe.expire(f'relationship', exp)
             pipe.expire(f'key:{iri!s}', exp)

@@ -2,9 +2,9 @@
 
 import json
 import logging
+from collections import defaultdict
 
 import redis
-from collections import defaultdict
 from atenvironment import environment
 
 from tsa.celery import celery
@@ -12,7 +12,7 @@ from tsa.celery import celery
 
 @celery.task
 @environment('REDIS')
-def index_query(iri, redis_url): #TODO needs rewriting, probably just distrquery
+def index_query(iri, redis_url):  # TODO needs rewriting, probably just distrquery
     """Query the index and construct related datasets for the iri.
 
     Final result is stored in redis.
@@ -47,6 +47,10 @@ def index_query(iri, redis_url): #TODO needs rewriting, probably just distrquery
 @celery.task
 @environment('REDIS')
 def index_distribution_query(iri, redis_url):
+    """Query the index and construct related datasets for the iri of a distribution.
+
+    Final result is stored in redis.
+    """
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
 
     related = defaultdict(set)
