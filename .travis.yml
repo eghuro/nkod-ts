@@ -1,31 +1,44 @@
 # Config file for automatic testing at travis-ci.org
 sudo: false  # http://docs.travis-ci.com/user/migrating-from-legacy/
-dist: xenial
-language: python
-env:
-- FLASK_APP=autoapp.py FLASK_DEBUG=1 REDIS=redis://foo
-python:
-  - 3.6
-  - 3.7
-  - 3.7-dev
-  - 3.8-dev
-  - nightly
-  - pypy3.5
-services:
+
+stages:
+  - python
   - docker
-install:
-  - pip install -r requirements.txt
-script:
-  - flask test
-#before_script:
-#  - flask lint
-deploy:
-  provider: script
-  script:
-   - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-   - docker build -f Dockerfile -t $REPO:$COMMIT .
-   - docker tag $REPO:$COMMIT $REPO:$TAG
-   - docker tag $REPO:$COMMIT $REPO:travis-$TRAVIS_BUILD_NUMBER
-   - docker push USER/REPO
-  on:
-    branch: release
+  - deploy
+
+jobs:
+  include:
+    - stage: python
+      dist: xenial
+      language: python
+      env:
+      - FLASK_APP=autoapp.py FLASK_DEBUG=1 REDIS=redis://foo
+      python:
+        - 3.6
+        - 3.7
+        - 3.7-dev
+        - 3.8-dev
+        - nightly
+        - pypy3.5
+      install:
+        - pip install -r requirements.txt
+      script:
+        - flask test
+      #before_script:
+      #  - flask lint
+    - stage: docker
+      services: docker
+      script:
+        - docker-compose build
+    - stage: deploy
+      deploy:
+        provider: script
+        script:
+          - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          - docker build -f Dockerfile -t $REPO:$COMMIT .
+          - docker tag $REPO:$COMMIT $REPO:$TAG
+          - docker tag $REPO:$COMMIT $REPO:travis-$TRAVIS_BUILD_NUMBER
+          - docker push USER/REPO
+        on:
+          branch: master
+          tags: true
