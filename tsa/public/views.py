@@ -13,7 +13,7 @@ from flask import Blueprint, abort, current_app, jsonify, request
 from tsa.cache import cached
 from tsa.tasks.analyze import analyze, process_endpoint
 from tsa.tasks.batch import inspect_catalog, inspect_endpoint
-from tsa.tasks.query import index_distribution_query, index_query
+from tsa.tasks.query import index_distribution_query
 from tsa.tasks.system import hello, system_check
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
@@ -112,30 +112,6 @@ def api_analyze_catalog():
             return 'OK'
         else:
             abort(400)
-    else:
-        abort(400)
-
-
-@blueprint.route('/api/v1/query/dataset', methods=['GET'])
-@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
-@environment('REDIS')
-def ds_index(redis_url):
-    """Query a datacube dataset."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    iri = request.args.get('iri', None)
-    current_app.logger.info(f'Querying dataset for: {iri}')
-
-    result_key = f'query:{iri}'
-    current_app.logger.info(f'Result key: {result_key}')
-
-    if rfc3987.match(iri):
-        if not r.exists(f'key:{iri}'):
-            abort(404)
-        elif not r.exists(result_key):
-            current_app.logger.info(f'Constructing result')
-            index_query.s(iri).apply_async().get()
-        current_app.logger.info(f'Return result from redis')
-        return jsonify(json.loads(r.get(result_key)))
     else:
         abort(400)
 
