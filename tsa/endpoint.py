@@ -4,13 +4,18 @@ from atenvironment import environment
 from rdflib import Graph
 from SPARQLWrapper import N3, SPARQLWrapper
 
+from tsa.robots import robots_cache, user_agent
+
 
 class SparqlGraph(object):
     """Wrapper around SPARQL endpoint providing rdflib.Graph-like querying API."""
 
     def __init__(self, endpoint):
         """Connect to the endpoint."""
-        self.__sparql = SPARQLWrapper(endpoint, returnFormat=N3)
+        if not robots_cache.allowed(endpoint):
+            log.warn(f'Not allowed to query {endpoint!s} as {user_agent!s} by robots.txt')
+
+        self.__sparql = SPARQLWrapper(endpoint, returnFormat=N3, agent=user_agent)
 
     def query(self, query_str):
         """Query the endpoint and parse the result graph."""

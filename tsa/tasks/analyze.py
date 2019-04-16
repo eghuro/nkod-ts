@@ -12,7 +12,9 @@ from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.endpoint import SparqlGraph
 from tsa.monitor import monitor
+from tsa.robots import robots_cache, user_agent
 from tsa.tasks.index import index, index_endpoint
+
 
 
 @celery.task
@@ -35,13 +37,19 @@ def analyze(iri, redis_url):
 
     guess = rdflib.util.guess_format(iri)
     try:
-        r = requests.get(iri, verify=False, stream=True)
+        if not robots_cache.allowed(iri):
+            log.warn(f'Not allowed to fetch {iri!s} as {user_agent!s}')
+
+        r = requests.get(iri, stream=True, headers={"User-Agent": user_agent})
         r.raise_for_status()
 
-        conlen = int(r.headers.get('Content-Length'))
-        if conlen > 1024 * 1024 * 1024:
-            log.error(f'Skipping as distribution file is too large: {conlen!s}')
-            return {}
+        if 'Content-Length' in r.headers.keys():
+            conlen = int(r.headers.get('Content-Length'))
+            if conlen > 1024 * 1024 * 1024:
+                log.error(f'Skipping as distribution file is too large: {conlen!s}')
+                return {}
+        else:
+            conlen = None
 
         if guess is None:
             guess = r.headers.get('content-type')
@@ -55,19 +63,21 @@ def analyze(iri, redis_url):
             red.sadd('stat:skipped', str(iri))
             return
 
-        monitor.log_size(conlen)
         key = f'data:{iri!s}'
         if not red.exists(key):
             chsize = 1024
+            conlen = 0
             for chunk in r.iter_content(chunk_size=chsize):
                 if chunk:
                     red.append(key, chunk)
+                    conlen = conlen + len(chunk)
             red.expire(key, 30 * 24 * 60 * 60)  # 30D
+            monitor.log_size(conlen)
 
         pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         return pipeline.delay()
     except:
-        log.warn(f'Failed to get {iri!s}')
+        log.exception(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
         return {}
 
@@ -96,7 +106,7 @@ def store_analysis(results, iri, redis_cfg):
 def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
     """Run one analyzer identified by its token."""
     log = logging.getLogger(__name__)
-    analyzer = getAnalyzer(analyzer_token)
+    analyzer = get_analyzer(analyzer_token)
 
     red = redis.StrictRedis().from_url(redis_cfg)
     try:
@@ -109,7 +119,7 @@ def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
         return None
 
 
-def getAnalyzer(analyzer_token):
+def get_analyzer(analyzer_token):
     """Retrieve an analyzer identified by its token."""
     for a in AbstractAnalyzer.__subclasses__():
         if a.token == analyzer_token:

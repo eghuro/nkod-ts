@@ -1,3 +1,4 @@
+## The following requirements were added by pip freeze:
 alembic==1.0.9
 amqp==2.4.2
 atenvironment==0.2.1
@@ -7,6 +8,7 @@ Babel==2.6.0
 beautifulsoup4==4.7.1
 billiard==3.6.0.0
 blinker==1.4
+cachetools==3.1.0
 celery==4.3.0
 certifi==2019.3.9
 cffi==1.12.2
@@ -57,7 +59,9 @@ rdflib==4.2.2
 rdflib-jsonld==0.4.0
 rdflib-sqlalchemy==0.3.8
 redis==3.2.1
+reppy==0.4.12
 requests==2.21.0
+requests-toolbelt==0.9.1
 rfc3987==1.3.8
 six==1.12.0
 snowballstemmer==1.2.1

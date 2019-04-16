@@ -161,11 +161,11 @@ class SkosAnalyzer(AbstractAnalyzer):
         """)]
 
         for schema in schemes:
-            for row in graph.query(SkosAnalyzer._scheme_count_query(schema)):
+            for row in graph.query(SkosAnalyzer._scheme_count_query(str(schema))):
                 schemes_count[schema] = row['count']
 
         for schema in schemes:
-            top_concept[schema] = [row['concept'] for row in graph.query(SkosAnalyzer._scheme_top_concept(schema))]
+            top_concept[schema] = [row['concept'] for row in graph.query(SkosAnalyzer._scheme_top_concept(str(schema)))]
 
         collections = [row['coll'] for row in graph.query("""
         SELECT DISTINCT ?coll WHERE {
