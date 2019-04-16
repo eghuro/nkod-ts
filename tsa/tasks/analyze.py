@@ -103,7 +103,7 @@ def fetch(iri):
 
     delay = robots_cache.get(iri).delay
     if delay is not None:
-        log.info(f'Recording crawl-delay of {delay} for {iri}'')
+        log.info(f'Recording crawl-delay of {delay} for {iri}')
         try:
             delay = int(delay)
         except:
