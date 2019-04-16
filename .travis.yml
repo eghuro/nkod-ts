@@ -21,8 +21,10 @@ script:
 #before_script:
 #  - flask lint
 deploy:
-  provider: script
-  script:
+  provider: pypi
+  user: $PYPI_USER
+  password: $PYPI_PASSWORD
+  after_deploy:
    - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
    - docker build -f Dockerfile -t $REPO:$COMMIT .
    - docker tag $REPO:$COMMIT $REPO:$TAG
