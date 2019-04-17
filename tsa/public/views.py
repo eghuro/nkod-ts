@@ -184,7 +184,7 @@ def gather_analyses(iris, r):
     classes = defaultdict(int)
 
     for iri in request.get_json():
-        if skip(r, iri):
+        if skip(iri, r):
             continue
         key = f'analyze:{iri!s}'
         x = json.loads(r.get(key))
@@ -225,7 +225,7 @@ def gather_queries(iris, r):
     current_app.logger.info('Appending results')
     for iri in iris:
         key = f'distrquery:{iri!s}'
-        if missing(r, iri):
+        if missing(iri, r):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
         else:
             related = r.get(key)
