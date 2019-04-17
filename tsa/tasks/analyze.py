@@ -11,6 +11,7 @@ from reppy.robots import Robots
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
+from tsa.compression import decompress_7z, SizeException
 from tsa.endpoint import SparqlGraph
 from tsa.monitor import monitor
 from tsa.robots import robots_cache, user_agent
@@ -60,8 +61,36 @@ def analyze(self, iri, redis_url):
         except Skip:
             return {}
 
-        store_content(iri, r, red)
-        pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
+        if guess in ['application/x-7z-compressed']:
+            def gen_iri_guess(iri, r, red):
+                for sub_iri in decompress_7z(iri, r, red):
+                    guess = rdflib.util.guess_format(sub_iri)
+                    if guess is None:
+                        logger.error(f'Unknown format after decompression: {sub_iri}')
+                    else:
+                        yield sub_iri, guess
+            def gen_tasks(iri, r, red):
+                lst = []
+                try:
+                    for x in gen_iri_guess(iri, r, red):
+                        lst.append(x)
+                except SizeException as e:
+                    log.error(f'One of the files in archive {iri} is too large ({e.name})')
+                    for sub_iri, _ in lst:
+                        log.debug(f'Expire {sub_iri}')
+                        red.expire(f'data:{sub_iri}', 1)
+                else:
+                    for sub_iri, guess in lst:
+                        yield index.si(sub_iri, guess)
+                        yield run_analyzer.si(sub_iri, guess)
+            pipeline = group([t for t in gen_tasks(iri, r, red)])
+        else:
+            try:
+                store_content(iri, r, red)
+            except SizeException:
+                log.error(f'File is too large: {iri}')
+            else:
+                pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         return pipeline.delay()
     except:
         log.exception(f'Failed to get {iri!s}')
@@ -73,7 +102,8 @@ def test_content_length(r, log):
     """Test content length header if the distribution is not too large."""
     if 'Content-Length' in r.headers.keys():
         conlen = int(r.headers.get('Content-Length'))
-        if conlen > 1024 * 1024 * 1024:
+        if conlen > 512 * 1024 * 1024:
+            # Due to redis limitation
             log.error(f'Skipping as distribution file is too large: {conlen!s}')
             raise Skip()
 
@@ -92,7 +122,7 @@ def guess_format(iri, r, log, red):
 
     if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
                      'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
-                     'trix', 'trig', 'turtle', 'xml', 'json-ld']:
+                     'trix', 'trig', 'turtle', 'xml', 'json-ld', 'application/x-7z-compressed']:
         log.info(f'Skipping this distribution')
         red.sadd('stat:skipped', str(iri))
         raise Skip()
@@ -108,6 +138,9 @@ def store_content(iri, r, red):
         conlen = 0
         for chunk in r.iter_content(chunk_size=chsize):
             if chunk:
+                if len(chunk) + conlen > 512 * 1024 * 1024:
+                    red.expire(key, 1)
+                    raise SizeException(iri)
                 red.append(key, chunk)
                 conlen = conlen + len(chunk)
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
