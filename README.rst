@@ -44,10 +44,10 @@ Run the following commands to bootstrap your environment ::
     git clone https://github.com/eghuro/crawlcheckio
     cd crawlcheckio
     pip install -r requirements.txt
-    npm install
-    npm run start-dev  # run the webpack dev server and flask server using concurrently
-
-You will see a pretty welcome screen.
+    # Start redis server
+    # Run concurrently
+    REDIS=redis://localhost:6379/0 celery worker -l info -A tsa.celery
+    REDIS=redis://localhost:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
 
 In general, before running shell commands, set the ``FLASK_APP`` and
 ``FLASK_DEBUG`` environment variables ::
@@ -62,7 +62,10 @@ Deployment
 To deploy::
 
     export FLASK_DEBUG=0
-    npm start       # build assets with webpack and start gunicorn server
+    # Start redis server
+    # Run concurrently
+    REDIS=redis://redis:6379/0 celery worker -l info -A tsa.celery
+    REDIS=redis://redis:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
 
 In your production environment, make sure the ``FLASK_DEBUG`` environment
 variable is unset or is set to ``0``, so that ``ProdConfig`` is used.
