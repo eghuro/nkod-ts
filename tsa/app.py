@@ -6,7 +6,7 @@ import logging
 from flask import Flask, g, render_template
 
 from tsa import commands, public
-from tsa.extensions import cache, cors, debug_toolbar, sentry
+from tsa.extensions import cache, cors, sentry
 from tsa.settings import ProdConfig
 
 
@@ -31,7 +31,6 @@ def register_extensions(app):
     """Register Flask extensions."""
     cache.init_app(app)
     cors.init_app(app)
-    debug_toolbar.init_app(app)
     sentry.init_app(app, logging=True, level=logging.ERROR)
     return None
 
