@@ -30,7 +30,7 @@ For the full environment use docker-compose:
     
 Build & run manually
 ----------
-CPython 3.6+ and PyPy 3.5 are supported
+CPython 3.6+ is supported
 
 First, set your app's secret key as an environment variable. For example,
 add the following to ``.bashrc`` or ``.bash_profile``.
