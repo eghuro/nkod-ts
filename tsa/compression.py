@@ -10,6 +10,8 @@ import libarchive
 from io import BytesIO
 from urllib.parse import urljoin
 
+from tsa.monitor import monitor
+
 
 class SizeException(BaseException):
     """Indicating a subfile is too large"""

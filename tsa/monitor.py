@@ -13,8 +13,7 @@ class Monitor(object):
             self.__client = redis.StrictRedis().from_url(redis_url)
             for key in self.__client.hkeys('stat:format'):
                 self.__client.hdel('stat:format', key)
-            self.__client.set('stat:sum', 0)
-            self.__client.set('stat:count', 0)
+            self.__client.delete('stat:size')
         except redis.exceptions.ConnectionError:
             self.__client = None
 
@@ -25,10 +24,8 @@ class Monitor(object):
 
     def log_size(self, size):
         """Record distribution size."""
-        key = 'stat:sum'
-        self.__client.incrby(key, size)
-        key = 'stat:count'
-        self.__client.incr(key)
+        key = 'stat:size'
+        self.__client.lpush(key, size)
 
 
 monitor = Monitor()

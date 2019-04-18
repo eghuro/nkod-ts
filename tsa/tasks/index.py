@@ -47,7 +47,7 @@ def run_indexer(iri, g, r):
     pipe = r.pipeline()
     exp = 30 * 24 * 60 * 60  # 30D
 
-    log.info('Indexing ...')
+    log.info(f'Indexing {iri}')
     cnt = 0
     for analyzer in [it() for it in AbstractAnalyzer.__subclasses__()]:
         for key, rel_type in analyzer.find_relation(g):

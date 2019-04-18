@@ -152,6 +152,54 @@ def stat_failed(redis_url):
     return jsonify(list(r.smembers('stat:failed')))
 
 
+@blueprint.route('/api/v1/stat/size', methods=['GET'])
+@environment('REDIS')
+def stat_size(redis_url):
+    """List min, max and average distribution size."""
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    return jsonify(retrieve_size_stats(r))
+
+
+def retrieve_size_stats(r):
+    lst = sorted(r.lrange('stat:size', 0, -1))
+    import statistics
+    try:
+        mode = statistics.mode(lst)
+    except statistics.StatisticsError:
+        mode = None
+    try:
+        mean = statistics.mean(lst)
+    except statistics.StatisticsError:
+        mean = None
+    try:
+        stdev = statistics.stdev(lst, mean)
+    except statistics.StatisticsError:
+        stdev = None
+    try:
+        var = statistics.variance(lst, mean)
+    except statistics.StatisticsError:
+        var = None
+
+    try:
+        minimum = min(lst)
+    except ValueError:
+        minimum = None
+
+    try:
+        maximum = max(lst)
+    except ValueError:
+        maximum = None
+
+    return {
+        'min': minimum,
+        'max': maximum,
+        'mean': mean,
+        'mode': mode,
+        'stdev': stdev,
+        'var': var
+    }
+
+
 @blueprint.route('/api/v1/query/analysis', methods=['GET'])
 @environment('REDIS')
 def known_distributions(redis_url):
@@ -217,7 +265,8 @@ def fetch_missing(iris, r):
             missing_query.append(iri)
 
     current_app.logger.info('Fetching missing query results')
-    group(index_distribution_query.si(iri) for iri in missing_query).apply_async().get()
+    t = group(index_distribution_query.si(iri) for iri in missing_query).delay()
+    t.get()
 
 
 def gather_queries(iris, r):
@@ -254,4 +303,8 @@ def batch_analysis(redis_url):
     analyses, predicates, classes = gather_analyses(request.get_json(), r)
     fetch_missing(request.get_json(), r)
     analyses.extend(x for x in gather_queries(request.get_json(), r))
+    analyses.append({
+        'format': list(r.smembers('stat:failed')),
+        'size': retrieve_size_stats(r)
+    })
     return jsonify(analyses)

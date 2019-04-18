@@ -53,10 +53,10 @@ def analyze(self, iri, redis_url):
         try:
             r = fetch(iri, log, red)
         except RobotsRetry as e:
-            raise self.retry(e.delay)
+            self.retry(countdown=e.delay)
 
         try:
-            test_content_length(r, log)
+            test_content_length(iri, r, log)
             guess = guess_format(iri, r, log, red)
         except Skip:
             return {}
@@ -64,6 +64,8 @@ def analyze(self, iri, redis_url):
         if guess in ['application/x-7z-compressed']:
             def gen_iri_guess(iri, r, red):
                 for sub_iri in decompress_7z(iri, r, red):
+                    red.sadd(key, sub_iri)
+                    red.expire(key, 30 * 24 * 60 * 60)
                     guess = rdflib.util.guess_format(sub_iri)
                     if guess is None:
                         logger.error(f'Unknown format after decompression: {sub_iri}')
@@ -98,13 +100,13 @@ def analyze(self, iri, redis_url):
         return {}
 
 
-def test_content_length(r, log):
+def test_content_length(iri, r, log):
     """Test content length header if the distribution is not too large."""
     if 'Content-Length' in r.headers.keys():
         conlen = int(r.headers.get('Content-Length'))
         if conlen > 512 * 1024 * 1024:
             # Due to redis limitation
-            log.error(f'Skipping as distribution file is too large: {conlen!s}')
+            log.error(f'Skipping {iri} as it is too large: {conlen!s}')
             raise Skip()
 
 
@@ -116,13 +118,15 @@ def guess_format(iri, r, log, red):
     """
     guess = rdflib.util.guess_format(iri)
     if guess is None:
-        guess = r.headers.get('content-type')
+        guess = r.headers.get('content-type').split(';')[0]
     monitor.log_format(str(guess))
     log.info(f'Guessing format to be {guess!s}')
 
     if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
                      'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
-                     'trix', 'trig', 'turtle', 'xml', 'json-ld', 'application/x-7z-compressed']:
+                     'trix', 'trig', 'turtle', 'xml', 'json-ld',
+                     'application/x-7z-compressed', 'text/html',
+                     'application/rdf+xml']:
         log.info(f'Skipping this distribution')
         red.sadd('stat:skipped', str(iri))
         raise Skip()
