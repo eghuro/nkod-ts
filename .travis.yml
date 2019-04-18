@@ -14,7 +14,7 @@ python:
 services:
   - docker
 install:
-  - apt-get install libarchive-dev
+  - sudo apt-get install libarchive-dev
   - pip install -r requirements.txt
 script:
   - flask test
