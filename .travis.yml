@@ -18,7 +18,7 @@ install:
   - pip install -r requirements.txt
 script:
   - flask test
-  - docker-compose build
+  - PYTHON_VERSION=`python --version|cut -d' ' -f2` docker-compose build
 #before_script:
 #  - flask lint
 deploy:

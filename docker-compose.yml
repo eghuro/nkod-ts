@@ -1,7 +1,10 @@
 version: '3.3'
 services:
   web:
-    build: .
+    build:
+        context: .
+        args:
+            PYTHON_VERSION: ${PYTHON_VERSION}
     environment:
       - REDIS=redis://redis:6379/0
     ports:
@@ -13,7 +16,10 @@ services:
     ports:
       - "6379:6379"
   celery:
-    build: .
+    build:
+        context: .
+        args:
+            PYTHON_VERSION: ${PYTHON_VERSION}
     environment:
       - ETL=http://etl:8080
       - VIRTUOSO=http://virtuoso:8890
