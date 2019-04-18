@@ -77,7 +77,7 @@ class CubeAnalyzer(AbstractAnalyzer):
     def analyze(self, graph):
         """Analysis of a datacube."""
         datasets = defaultdict(QbDataset)
-
+        log = logging.getLogger(__name__)
         prefix = 'http://purl.org/linked-data/cube#'
         for row in graph.query(f'SELECT DISTINCT ?ds WHERE {{?ds a <{prefix}DataSet>}}'):
             dataset = row['ds']

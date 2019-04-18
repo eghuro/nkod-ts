@@ -47,7 +47,7 @@ def analyze(self, iri, redis_url):
 
     if iri.endswith('sparql'):
         log.info(f'Guessing it is a SPARQL endpoint')
-        process_endpoint.delay(iri)
+        return process_endpoint.delay(iri)
 
     try:
         try:

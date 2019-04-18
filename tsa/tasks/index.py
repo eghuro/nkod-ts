@@ -16,7 +16,7 @@ def index_endpoint(iri, redis_cfg):
     """Index related resources in an endpoint by initializing a SparqlGraph."""
     g = SparqlGraph(iri)
     r = redis.StrictRedis.from_url(redis_cfg)
-    return run_indexer(None, g, r)
+    return run_indexer(iri, g, r)
 
 
 @celery.task

@@ -238,7 +238,7 @@ def gather_analyses(iris, r):
         x = json.loads(r.get(key))
         analyses_red = []
         for y in x:
-            analyses_red.append(json.loads(y))
+            analyses_red.append(y)
         for analysis in analyses_red:  # from several analyzers
             if analysis is None:
                 continue

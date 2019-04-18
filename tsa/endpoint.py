@@ -4,7 +4,9 @@ import logging
 import redis
 from atenvironment import environment
 from rdflib import Graph
-from SPARQLWrapper import N3, SPARQLWrapper
+from rdflib.plugins.sparql.results.jsonresults import JSONResult
+from SPARQLWrapper import JSON, SPARQLWrapper
+from SPARQLWrapper.SPARQLExceptions import EndPointInternalError
 
 from tsa.robots import robots_cache, user_agent
 
@@ -18,15 +20,20 @@ class SparqlGraph(object):
             log = logging.getLogger(__name__)
             log.warn(f'Not allowed to query {endpoint!s} as {user_agent!s} by robots.txt')
 
-        self.__sparql = SPARQLWrapper(endpoint, returnFormat=N3, agent=user_agent)
+        self.__sparql = SPARQLWrapper(endpoint, agent=user_agent)
 
     def query(self, query_str):
         """Query the endpoint and parse the result graph."""
         self.__sparql.setQuery(query_str)
-        results = self.__sparql.query().convert()
-        g = Graph()
-        g.parse(data=results, format='n3')
-        return g.query(query_str)
+        try:
+            self.__sparql.setReturnFormat(JSON)
+            resg = self.__sparql.queryAndConvert()
+            res = JSONResult(resg)
+        except EndPointInternalError:
+            self.__sparql.returnFormat = 'application/sparql-results+json'
+            resg = self.__sparql.queryAndConvert()
+            res = JSONResult(resg)
+        return res
 
 
 class SparqlEndpointAnalyzer(object):
