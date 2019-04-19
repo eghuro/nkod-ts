@@ -11,9 +11,6 @@ class Monitor(object):
         """Try to connect to redis and reset counters."""
         try:
             self.__client = redis.StrictRedis().from_url(redis_url)
-            for key in self.__client.hkeys('stat:format'):
-                self.__client.hdel('stat:format', key)
-            self.__client.delete('stat:size')
         except redis.exceptions.ConnectionError:
             self.__client = None
 
