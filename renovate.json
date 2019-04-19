@@ -1,5 +1,19 @@
 {
   "extends": [
     "config:base"
-  ]
+  ],
+  "separateMajorMinor": true,
+  "rebaseStalePrs": true,
+  "minor": {
+    "automerge": true
+  },
+  "patch": {
+    "automerge": true
+  },
+  "pin": {
+    "automerge": true
+  },
+  "docker": {
+    "enabled": true
+  }
 }
