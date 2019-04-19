@@ -208,7 +208,7 @@ class SkosAnalyzer(AbstractAnalyzer):
 
 
         for token in ['exactMatch', 'mappingRelation', 'closeMatch', 'relatedMatch']:
-            for row in graph.query(f'SELECT ?a ?b WHERE { ?a <http://www.w3.org/2004/02/skos/core#{token}> ?b. }'):
+            for row in graph.query(f'SELECT ?a ?b WHERE {{ ?a <http://www.w3.org/2004/02/skos/core#{token}> ?b. }}'):
                 yield row['a'], token
                 yield row['b'], token
 
