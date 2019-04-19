@@ -68,8 +68,7 @@ def api_analyze_iri():
         if rfc3987.match(iri):
             analyze.delay(iri)
             return 'OK'
-        else:
-            abort(400)
+        abort(400)
     else:
         iris = []
         for iri in request.get_json():
@@ -91,8 +90,7 @@ def api_analyze_endpoint():
     if rfc3987.match(iri):
         (process_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
         return 'OK'
-    else:
-        abort(400)
+    abort(400)
 
 
 @blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
@@ -104,16 +102,14 @@ def api_analyze_catalog():
         if rfc3987.match(iri):
             (inspect_catalog.si(iri) | index_distribution_query.si(iri)).apply_async()
             return 'OK'
-        else:
-            abort(400)
+        abort(400)
     elif 'sparql' in request.args:
         iri = request.args.get('sparql', None)
         current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
         if rfc3987.match(iri):
             (inspect_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
             return 'OK'
-        else:
-            abort(400)
+        abort(400)
     else:
         abort(400)
 
@@ -132,8 +128,7 @@ def distr_index(redis_url):
         else:
             index_distribution_query.s(iri).apply_async().get()
             return jsonify(json.loads(r.get(f'distrquery:{iri}')))
-    else:
-        abort(400)
+    abort(400)
 
 
 @blueprint.route('/api/v1/stat/format', methods=['GET'])
@@ -329,5 +324,4 @@ def batch_analysis(redis_url):
     })
     if 'pretty' in request.args:
         return json.dumps(analyses, indent=4, sort_keys=True)
-    else:
-        return jsonify(analyses)
+    return jsonify(analyses)
