@@ -318,13 +318,16 @@ def batch_analysis(redis_url):
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     analyses = gather_analyses(lst, r)
+    if 'small' in request.args:
+        current_app.logger.info('Small')
+        analyses = analyses[-2:]
     fetch_missing(lst, r)
     analyses.extend(x for x in gather_queries(lst, r))
     analyses.append({
         'format': list(r.hgetall('stat:format')),
         'size': retrieve_size_stats(r)
     })
-    if request.args.get('pretty', 'false').lower() == 'true':
+    if 'pretty' in request.args:
         return json.dumps(analyses, indent=4, sort_keys=True)
     else:
         return jsonify(analyses)
