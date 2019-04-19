@@ -162,6 +162,7 @@ def stat_size(redis_url):
 
 def retrieve_size_stats(r):
     lst = sorted(r.lrange('stat:size', 0, -1))
+    current_app.logger.info(str(lst))
     import statistics
     try:
         mode = statistics.mode(lst)
@@ -200,14 +201,24 @@ def retrieve_size_stats(r):
     }
 
 
-@blueprint.route('/api/v1/query/analysis', methods=['GET'])
+def graph_iris(r):
+    for e in r.smembers('endpoints'):
+        for g in r.smembers(f'graphs:{e}'):
+            yield f'{e}/{g}'
+
+
 @environment('REDIS')
-def known_distributions(redis_url):
-    """List known distributions and endpoints without failed or skipped ones."""
+def get_known_distributions(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    distr_endpoints = r.smembers('distributions').union(r.smembers('endpoints'))
+    distr_endpoints = r.smembers('distributions').union(frozenset(graph_iris(r)))
     failed_skipped = r.smembers('stat:failed').union(r.smembers('stat:skipped'))
-    return jsonify(list(distr_endpoints.difference(failed_skipped)))
+    return distr_endpoints.difference(failed_skipped)
+
+
+@blueprint.route('/api/v1/query/analysis', methods=['GET'])
+def known_distributions():
+    """List known distributions and endpoints without failed or skipped ones."""
+    return jsonify(list(get_known_distributions))
 
 
 def skip(iri, r):
@@ -231,7 +242,7 @@ def gather_analyses(iris, r):
     predicates = defaultdict(int)
     classes = defaultdict(int)
 
-    for iri in request.get_json():
+    for iri in iris:
         if skip(iri, r):
             continue
         key = f'analyze:{iri!s}'
@@ -240,6 +251,7 @@ def gather_analyses(iris, r):
         for y in x:
             analyses_red.append(y)
         for analysis in analyses_red:  # from several analyzers
+            analysis = json.loads(analysis)
             if analysis is None:
                 continue
             if 'predicates' in analysis:
@@ -253,7 +265,7 @@ def gather_analyses(iris, r):
     analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
     analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
 
-    return analyses, predicates, classes
+    return analyses
 
 
 def fetch_missing(iris, r):
@@ -265,7 +277,7 @@ def fetch_missing(iris, r):
             missing_query.append(iri)
 
     current_app.logger.info('Fetching missing query results')
-    t = group(index_distribution_query.si(iri) for iri in missing_query).delay()
+    t = group(index_distribution_query.si(iri) for iri in missing_query).apply_async()
     t.get()
 
 
@@ -299,12 +311,20 @@ def batch_analysis(redis_url):
     Get a list of distributions in request body as JSON, compile analyses,
     query the index return the compiled report.
     """
+
+    lst = request.get_json()
+    if lst is None:
+        lst = get_known_distributions()
+
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    analyses, predicates, classes = gather_analyses(request.get_json(), r)
-    fetch_missing(request.get_json(), r)
-    analyses.extend(x for x in gather_queries(request.get_json(), r))
+    analyses = gather_analyses(lst, r)
+    fetch_missing(lst, r)
+    analyses.extend(x for x in gather_queries(lst, r))
     analyses.append({
-        'format': list(r.smembers('stat:failed')),
+        'format': list(r.hgetall('stat:format')),
         'size': retrieve_size_stats(r)
     })
-    return jsonify(analyses)
+    if request.args.get('pretty', 'false').lower() == 'true':
+        return json.dumps(analyses, indent=4, sort_keys=True)
+    else:
+        return jsonify(analyses)

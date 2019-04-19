@@ -11,11 +11,11 @@ from reppy.robots import Robots
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
-from tsa.compression import decompress_7z, SizeException
-from tsa.endpoint import SparqlGraph
+from tsa.compression import SizeException, decompress_7z
+from tsa.endpoint import SparqlEndpointAnalyzer, SparqlGraph
 from tsa.monitor import monitor
 from tsa.robots import robots_cache, user_agent
-from tsa.tasks.index import index, index_endpoint
+from tsa.tasks.index import index, index_named
 
 
 class RobotsRetry(BaseException):
@@ -64,13 +64,19 @@ def analyze(self, iri, redis_url):
         if guess in ['application/x-7z-compressed']:
             def gen_iri_guess(iri, r, red):
                 for sub_iri in decompress_7z(iri, r, red):
-                    red.sadd(key, sub_iri)
+                    # TODO: asi zbytecne, archiv neoteviram vicekrat
+                    if red.sadd(key, sub_iri) == 0:
+                        log.debug(f'Skipping distribution as it was recently analyzed: {sub_iri!s}')
+                        continue
                     red.expire(key, 30 * 24 * 60 * 60)
+                    # end_todo
                     guess = rdflib.util.guess_format(sub_iri)
                     if guess is None:
-                        logger.error(f'Unknown format after decompression: {sub_iri}')
+                        log.error(f'Unknown format after decompression: {sub_iri}')
+                        red.expire(f'data:{sub_iri}', 1)
                     else:
                         yield sub_iri, guess
+
             def gen_tasks(iri, r, red):
                 lst = []
                 try:
@@ -153,10 +159,10 @@ def store_content(iri, r, red):
 
 def fetch(iri, log, red):
     """Fetch the distribution. Mind robots.txt."""
+    key = f'delay_{Robots.robots_url(iri)!s}'
     if not robots_cache.allowed(iri):
         log.warn(f'Not allowed to fetch {iri!s} as {user_agent!s}')
     else:
-        key = f'delay_{Robots.robots_url(iri)!s}'
         wait = red.ttl(key)
         if wait > 0:
             log.info(f'Analyze {iri} in {wait} because of crawl-delay')
@@ -233,21 +239,33 @@ def process_endpoint(iri, redis_cfg):
     red = redis.StrictRedis().from_url(redis_cfg)
     key = f'endpoints'
     if red.sadd(key, iri) > 0:
+        a = SparqlEndpointAnalyzer()
         # run analyzer and indexer on the endpoint instead of parsing the graph
-        group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
+        # group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
+        tasks = []
+        for g in a.get_graphs_from_endpoint(iri):
+            key = f'graphs:{iri}'
+            if red.sadd(key, g) > 0:
+                tasks.append(index_named.si(iri, g))
+                tasks.append(analyze_named.si(iri, g))
+        group(tasks).apply_async()
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
     else:
         log = logging.getLogger(__name__)
         log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
+# """Analyze triples in the endpoint."""
+# return group(analyze_named.si(iri, g) for g in a.get_graphs_from_endpoint(iri)).apply_async()
+
+
 @celery.task
 @environment('REDIS')
-def analyze_endpoint(iri, redis_cfg):
-    """Analyze triples in the endpoint."""
+def analyze_named(endpoint_iri, named_graph, redis_cfg):
+    """Analyze triples in the named graph of the endpoint."""
     red = redis.StrictRedis().from_url(redis_cfg)
-    g = SparqlGraph(iri)
-    key = f'analyze:{iri!s}'
+    g = SparqlGraph(endpoint_iri, named_graph)
+    key = f'analyze:{endpoint_iri!s}:{named_graph!s}'
     analyzers = [it() for it in AbstractAnalyzer.__subclasses__()]
     red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
     red.expire(key, 30 * 24 * 60 * 60)  # 30D

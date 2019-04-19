@@ -5,7 +5,7 @@ import redis
 from atenvironment import environment
 from rdflib import Graph
 from rdflib.plugins.sparql.results.jsonresults import JSONResult
-from SPARQLWrapper import JSON, SPARQLWrapper
+from SPARQLWrapper import JSON, N3, POSTDIRECTLY, SPARQLWrapper
 from SPARQLWrapper.SPARQLExceptions import EndPointInternalError
 
 from tsa.robots import robots_cache, user_agent
@@ -14,7 +14,7 @@ from tsa.robots import robots_cache, user_agent
 class SparqlGraph(object):
     """Wrapper around SPARQL endpoint providing rdflib.Graph-like querying API."""
 
-    def __init__(self, endpoint):
+    def __init__(self, endpoint, named=None):
         """Connect to the endpoint."""
         if not robots_cache.allowed(endpoint):
             log = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class SparqlGraph(object):
 class SparqlEndpointAnalyzer(object):
     """Extract DCAT datasets from a SPARQL endpoint."""
 
-    def __query(self, endpoint):
+    def __query(self, endpoint, named=None):
         str1 = """
         construct {
           ?ds a <http://www.w3.org/ns/dcat#Dataset>;
@@ -73,7 +73,11 @@ class SparqlEndpointAnalyzer(object):
          <http://rdfs.org/ns/void#exampleResource> ?exampleResource;
          <http://rdfs.org/ns/void#sparqlEndpoint> ?sparqlEndpoint;
          <http://rdfs.org/ns/void#triples> ?triples.
-       } where {
+       }
+       """
+
+        str3 = """
+       where {
          ?ds a <http://www.w3.org/ns/dcat#Dataset>;
          <http://purl.org/dc/terms/title> ?title.
          OPTIONAL { ?ds <http://purl.org/dc/terms/publisher> ?publisher. }
@@ -106,20 +110,42 @@ class SparqlEndpointAnalyzer(object):
          }
        }
        """
-        return f'{str1} <{endpoint}>. {str2}'
+
+        if named is not None:
+            return f'{str1} <{endpoint}>. {str2} from <{named}> {str3}'
+        else:
+            return f'{str1} <{endpoint}>. {str2} {str3}'
 
     @environment('REDIS')
     def peek_endpoint(self, endpoint, redis_url):
         """Extract DCAT datasets from the given endpoint and store them in redis."""
         sparql = SPARQLWrapper(endpoint, returnFormat=N3)
-        sparql.setQuery(self.__query(endpoint))
+        sparql.setRequestMethod(POSTDIRECTLY)
+        sparql.setMethod('POST')
+        for g in self.get_graphs_from_endpoint(endpoint):
+            sparql.setQuery(self.__query(endpoint, g))
 
-        ret = sparql.query().convert()
-        g = Graph()
-        g.parse(data=ret, format='n3')
+            ret = sparql.query().convert()
+            g = Graph()
+            g.parse(data=ret, format='n3')
 
-        r = redis.StrictRedis().from_url(redis_url)
-        key = f'data:{endpoint!s}'
-        r.set(key, g.serialize(format='turtle'))
-        r.expire(key, 30 * 24 * 60 * 60)  # 30D
-        return key
+            r = redis.StrictRedis().from_url(redis_url)
+            key = f'data:{endpoint!s}:{g!s}'
+            r.set(key, g.serialize(format='turtle'))
+            r.expire(key, 30 * 24 * 60 * 60)  # 30D
+            yield key
+
+    def get_graphs_from_endpoint(self, endpoint):
+        sparql = SPARQLWrapper(endpoint, returnFormat=N3)
+        sparql.setRequestMethod(POSTDIRECTLY)
+        sparql.setMethod('POST')
+        sparql.setQuery('select distinct ?g where { GRAPH ?g {?s ?p ?o} }')
+        try:
+            sparql.setReturnFormat(JSON)
+            resg = sparql.queryAndConvert()
+            res = JSONResult(resg)
+        except EndPointInternalError:
+            sparql.returnFormat = 'application/sparql-results+json'
+            resg = sparql.queryAndConvert()
+            res = JSONResult(resg)
+        return [row['g'] for row in res]

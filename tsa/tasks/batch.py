@@ -13,11 +13,11 @@ from tsa.tasks.analyze import analyze, process_endpoint
 
 @celery.task
 @environment('REDIS')
-def inspect_catalog(iri, redis_cfg):
+def inspect_catalog(key, redis_cfg):
     """Analyze DCAT datasets listed in the catalog."""
     log = logging.getLogger(__name__)
     r = redis.StrictRedis.from_url(redis_cfg)
-    key = f'data:{iri!s}'
+    # key = f'data:{iri!s}'
 
     log.debug('Parsing graph')
     try:
@@ -44,5 +44,5 @@ def inspect_catalog(iri, redis_cfg):
 def inspect_endpoint(iri):
     """Extract DCAT datasets from the given endpoint and schedule their analysis."""
     inspector = SparqlEndpointAnalyzer()
-    inspector.peek_endpoint(iri)
-    inspect_catalog.delay(iri)
+    for key in inspector.peek_endpoint(iri):
+        inspect_catalog.delay(key)
