@@ -153,7 +153,7 @@ class SkosAnalyzer(AbstractAnalyzer):
 
         schemes = [row['scheme'] for row in graph.query("""
         SELECT DISTINCT ?scheme WHERE {
-            OPTIONAL {?scheme a <http://www.w3.org/2004/02/skos/core#Scheme>.}
+            OPTIONAL {?scheme a <http://www.w3.org/2004/02/skos/core#ConceptScheme>.}
             OPTIONAL {?_ <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme.}
         }
         """)]
@@ -249,10 +249,29 @@ class GenericAnalyzer(AbstractAnalyzer):
         for row in graph.query('SELECT ?c (COUNT(?c) AS ?count) WHERE { ?s a ?c . } GROUP BY ?c ORDER BY DESC(?count)'):
             classes_count[row['c']] = row['count']
 
+        # external resource ::
+        #   - objekty, ktere nejsou subjektem v tomto grafu
+        #   - objekty, ktere nemaji typ v tomto grafu
+
+        q = 'SELECT DISTICNT ?o WHERE { ?s ?p ?o . }'
+        objects = set([row['o'] for row in graph.query(q)])
+        q = 'SELECT DISTINCT ?s WHERE { ?s ?p ?o. }'
+        subjects = set([row['s'] for row in graph.query(q)])
+        q = 'SELECT DISTINCT ?s WHERE { ?s a ?t. }'
+        locally_typed = set([row['s'] for row in graph.query(q)])
+
+        external_1 = objects.difference(subjects)
+        external_2 = objects.difference(locally_typed)
+        #toto muze byt SKOS Concept definovany jinde
+
         summary = {
             'triples': triples,
             'predicates': predicates_count,
-            'classes': classes_count
+            'classes': classes_count,
+            'external': {
+                'not_subject': external_1,
+                'no_type': external_2
+            }
         }
         return summary
 
