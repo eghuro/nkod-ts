@@ -1,20 +1,18 @@
 import logging
-import time
 
 from sys import platform
-if platform == "darwin":
+if platform == 'darwin':
     import os
     os.environ['LIBARCHIVE'] = '/usr/local/Cellar/libarchive/3.3.3/lib/libarchive.13.dylib'
 
 import libarchive
 from io import BytesIO
-from urllib.parse import urljoin
 
 from tsa.monitor import monitor
 
 
 class SizeException(BaseException):
-    """Indicating a subfile is too large"""
+    """Indicating a subfile is too large."""
 
     def __init__(self, name):
         self.name = name
@@ -40,7 +38,7 @@ def decompress_7z(iri, r, red):
                 conlen = 0
                 for block in entry.get_blocks():
                     if len(block) + conlen > 512 * 1024 * 1024:
-                        #Will fail due to redis limitation
+                        # Will fail due to redis limitation
                         red.expire(sub_key, 1)
                         raise SizeException(name)
 
