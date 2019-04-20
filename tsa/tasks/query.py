@@ -29,5 +29,6 @@ def index_distribution_query(iri, redis_url):
     key = f'distrquery:{iri}'
     with r.pipeline() as pipe:
         pipe.set(key, json.dumps(related))
+        pipe.sadd('purgeable', key)
         pipe.expire(key, exp)
         pipe.execute()

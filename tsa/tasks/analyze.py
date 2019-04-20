@@ -42,6 +42,7 @@ def analyze(self, iri, redis_url):
         log.debug(f'Skipping distribution as it was recently analyzed: {iri!s}')
         return
     red.expire(key, 30 * 24 * 60 * 60)
+    red.sadd('purgeable', key)
 
     log.info(f'Analyzing {iri!s}')
 
@@ -54,6 +55,8 @@ def analyze(self, iri, redis_url):
             r = fetch(iri, log, red)
         except RobotsRetry as e:
             self.retry(countdown=e.delay)
+        except requests.exceptions.RequestException as e:
+            self.retry(exc=e)
 
         try:
             test_content_length(iri, r, log)
@@ -69,6 +72,7 @@ def analyze(self, iri, redis_url):
                         log.debug(f'Skipping distribution as it was recently analyzed: {sub_iri!s}')
                         continue
                     red.expire(key, 30 * 24 * 60 * 60)
+                    red.sadd('purgeable', key)
                     # end_todo
                     guess = rdflib.util.guess_format(sub_iri)
                     if guess is None:
@@ -103,6 +107,7 @@ def analyze(self, iri, redis_url):
     except:
         log.exception(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
+        red.sadd('purgeable', 'stat:failed')
         return {}
 
 
@@ -135,6 +140,7 @@ def guess_format(iri, r, log, red):
                      'application/rdf+xml']:
         log.info(f'Skipping this distribution')
         red.sadd('stat:skipped', str(iri))
+        red.sadd('purgeable', 'stat:skipped')
         raise Skip()
 
     return guess
@@ -154,12 +160,14 @@ def store_content(iri, r, red):
                 red.append(key, chunk)
                 conlen = conlen + len(chunk)
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
+        red.sadd('purgeable', key)
         monitor.log_size(conlen)
 
 
 def fetch(iri, log, red):
     """Fetch the distribution. Mind robots.txt."""
     key = f'delay_{Robots.robots_url(iri)!s}'
+    red.sadd('purgeable', key)
     if not robots_cache.allowed(iri):
         log.warn(f'Not allowed to fetch {iri!s} as {user_agent!s}')
     else:
@@ -202,6 +210,7 @@ def store_analysis(results, iri, redis_cfg):
     red = redis.StrictRedis().from_url(redis_cfg)
     key_result = f'analyze:{iri!s}'
     red.set(key_result, json.dumps(results))
+    red.sadd('purgeable', key_result)
     red.expire(key_result, 30 * 24 * 60 * 60)  # 30D
     red.expire(f'data:{iri!s}', 1)  # trash original content
 
@@ -238,6 +247,7 @@ def process_endpoint(iri, redis_cfg):
     """Index and analyze triples in the endpoint."""
     red = redis.StrictRedis().from_url(redis_cfg)
     key = f'endpoints'
+    red.sadd('purgeable', key)
     if red.sadd(key, iri) > 0:
         a = SparqlEndpointAnalyzer()
         # run analyzer and indexer on the endpoint instead of parsing the graph
@@ -245,6 +255,7 @@ def process_endpoint(iri, redis_cfg):
         tasks = []
         for g in a.get_graphs_from_endpoint(iri):
             key = f'graphs:{iri}'
+            red.sadd('purgeable', key)
             if red.sadd(key, g) > 0:
                 tasks.append(index_named.si(iri, g))
                 tasks.append(analyze_named.si(iri, g))
@@ -266,6 +277,7 @@ def analyze_named(endpoint_iri, named_graph, redis_cfg):
     red = redis.StrictRedis().from_url(redis_cfg)
     g = SparqlGraph(endpoint_iri, named_graph)
     key = f'analyze:{endpoint_iri!s}:{named_graph!s}'
+    red.sadd('purgeable', key)
     analyzers = [it() for it in AbstractAnalyzer.__subclasses__()]
     red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
     red.expire(key, 30 * 24 * 60 * 60)  # 30D

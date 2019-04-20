@@ -10,6 +10,7 @@ from celery import group
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
+from tsa.monitor import Monitor
 from tsa.tasks.query import index_distribution_query
 
 from .stat import retrieve_size_stats
@@ -203,3 +204,15 @@ def batch(lst, r, small=False, pretty=False, stats=False):
     if pretty:
         return json.dumps(analyses, indent=4, sort_keys=True)
     return jsonify(analyses)
+
+
+@blueprint.route('/api/v1/cleanup', methods=['POST', 'DELETE'])
+@environment('REDIS')
+def cleanup(redis_url):
+    extra = ['purgeable']
+    stats = 'stats' in request.args
+    if stats:
+        extra.extend(Monitor.KEYS)
+
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    r.delete([key for key in r.smembers('purgeable')] + extra)

@@ -6,6 +6,8 @@ from atenvironment import environment
 class Monitor(object):
     """Monitor is recording various runtime metrics into redis."""
 
+    KEYS = ['stat:size', 'stat:format']
+
     @environment('REDIS')
     def __init__(self, redis_url):
         """Try to connect to redis and reset counters."""

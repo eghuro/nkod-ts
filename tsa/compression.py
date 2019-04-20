@@ -38,6 +38,7 @@ def decompress_7z(iri, r, red):
             sub_key = f'data:{sub_iri}'
             log.debug(f'Store {name} into {sub_key}')
             if not red.exists(sub_key):
+                red.sadd('purgeable', sub_key)
                 conlen = 0
                 for block in entry.get_blocks():
                     if len(block) + conlen > 512 * 1024 * 1024:

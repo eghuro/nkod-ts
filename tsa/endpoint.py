@@ -132,6 +132,7 @@ class SparqlEndpointAnalyzer(object):
             r = redis.StrictRedis().from_url(redis_url)
             key = f'data:{endpoint!s}:{g!s}'
             r.set(key, g.serialize(format='turtle'))
+            r.sadd('purgeable', key)
             r.expire(key, 30 * 24 * 60 * 60)  # 30D
             yield key
 

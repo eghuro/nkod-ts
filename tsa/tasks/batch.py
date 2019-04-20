@@ -17,13 +17,14 @@ def _log_dataset_distribution(g, r, log, access, endpoint):
     accesses = frozenset(access + dump + endpoint)
     pipe = r.pipeline()
     for ds in g.subjects(RDF.type, dcat.Dataset):
-        r.sadd('dcatds', str(ds))
+        pipe.sadd('dcatds', str(ds))
         key = f'dsdistr:{ds!s}'
+        pipe.sadd('purgeable', 'dcatds', key)
         for dist in g.objects(ds, dcat.distribution):
             for accessURL in g.objects(dist, dcat.accessURL):
                 if str(accessURL) in accesses:
                     log.debug('Distribution {accessURL!s} from DCAT dataset {ds!s}')
-                    r.sadd(key, str(accessURL))
+                    pipe.sadd(key, str(accessURL))
     pipe.execute()
 
 
@@ -46,8 +47,8 @@ def inspect_catalog(key, redis_cfg):
     distributions = []
     endpoints = []
     dcat = Namespace('http://www.w3.org/ns/dcat#')
-    for d in g.subjects(RDF.type, dcat.Distribution)):
-        for access in g.objects(d, dcat.accessURL)):
+    for d in g.subjects(RDF.type, dcat.Distribution):
+        for access in g.objects(d, dcat.accessURL):
             distributions.append(str(access))
     for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
         for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):

@@ -57,6 +57,8 @@ def run_indexer(token, iri, g, r):
         pipe.expire(f'key:{iri!s}', exp)
         pipe.expire(f'reltype:{iri!s}', exp)
 
+        pipe.sadd('purgeable', f'related:{rel_type!s}:{key!s}', f'relationship', f'key:{iri!s}', f'reltype:{iri!s}')
+
         cnt = cnt + 4
         pipe.execute()
 
