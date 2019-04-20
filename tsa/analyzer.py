@@ -268,8 +268,8 @@ class GenericAnalyzer(AbstractAnalyzer):
             'predicates': predicates_count,
             'classes': classes_count,
             'external': {
-                'not_subject': external_1,
-                'no_type': external_2
+                'not_subject': list(external_1),
+                'no_type': list(external_2)
             }
         }
         return summary
