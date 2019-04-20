@@ -184,7 +184,7 @@ def fetch(iri, log, red):
         log.info(f'Recording crawl-delay of {delay} for {iri}')
         try:
             delay = int(delay)
-        except:
+        except ValueError:
             log.error('Invalid delay value - could not convert to int')
         else:
             try:
@@ -259,9 +259,8 @@ def process_endpoint(iri, redis_cfg):
                 tasks.append(analyze_named.si(iri, g))
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
         return group(tasks).apply_async()
-    else:
-        log = logging.getLogger(__name__)
-        log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
+    log = logging.getLogger(__name__)
+    log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
 @celery.task

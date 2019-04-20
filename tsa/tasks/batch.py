@@ -4,6 +4,7 @@ import logging
 import rdflib
 import redis
 from atenvironment import environment
+from celery import group
 from rdflib.namespace import RDF
 from rdflib import Namespace
 
@@ -14,7 +15,7 @@ from tsa.tasks.analyze import analyze, process_endpoint
 
 def _log_dataset_distribution(g, r, log, access, endpoint):
     dcat = Namespace('http://www.w3.org/ns/dcat#')
-    accesses = frozenset(access + dump + endpoint)
+    accesses = frozenset(access + endpoint)
     pipe = r.pipeline()
     for ds in g.subjects(RDF.type, dcat.Dataset):
         pipe.sadd('dcatds', str(ds))

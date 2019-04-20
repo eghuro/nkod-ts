@@ -1,4 +1,7 @@
 """Endpoints to start the analysis."""
+import redis
+import requests
+from atenvironment import environment
 import rfc3987
 from flask import Blueprint, abort, current_app, request
 from celery import group
@@ -48,13 +51,21 @@ def api_analyze_endpoint():
 
 
 @blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
-def api_analyze_catalog():
+@environment('REDIS')
+def api_analyze_catalog(redis_cfg):
     """Analyze a catalog."""
+    r = redis.StrictRedis.from_url(redis_cfg)
     if 'iri' in request.args:
         iri = request.args.get('iri', None)
         current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
         if rfc3987.match(iri):
-            (inspect_catalog.si(iri) | index_distribution_query.si(iri)).apply_async()
+            key = f'catalog:{iri}'
+            req = requests.get(iri)
+            r.set(key, req.text)
+            exp = 30 * 24 * 60 * 60  # 30D
+            r.expire(key, exp)
+            r.sadd('purgeable', key)
+            inspect_catalog.si(key).apply_async()
             return 'OK'
         abort(400)
     elif 'sparql' in request.args:
