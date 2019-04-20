@@ -34,6 +34,23 @@ def api_analyze_get(redis_url):
         abort(400)
 
 
+@blueprint.route('/api/v1/query/dataset', methods=['GET'])
+@cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
+@environment('REDIS')
+def ds_index(redis_url):
+    """Query a DCAT dataset."""
+    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    iri = request.args.get('iri', None)
+    current_app.logger.info(f'Querying distributions from DCAT dataset: {iri}')
+    if rfc3987.match(iri):
+        if not r.sismember('dcatds', iri):
+            abort(404)
+        else:
+            return batch(r.smembers(f'dsdistr:{iri}'))
+    else:
+        abort(400)
+
+
 @blueprint.route('/api/v1/query/distribution', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
 @environment('REDIS')
@@ -166,16 +183,23 @@ def batch_analysis(redis_url):
         lst = _get_known_distributions()
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    small = 'small' in request.args
+    pretty = 'pretty' in request.args
+    return batch(lst, r, small, pretty, True)
+
+
+def batch(lst, r, small=False, pretty=False, stats=False):
     analyses = gather_analyses(lst, r)
-    if 'small' in request.args:
+    if small:
         current_app.logger.info('Small')
         analyses = analyses[-2:]
     fetch_missing(lst, r)
     analyses.extend(x for x in gather_queries(lst, r))
-    analyses.append({
-        'format': list(r.hgetall('stat:format')),
-        'size': retrieve_size_stats(r)
-    })
-    if 'pretty' in request.args:
+    if stats:
+        analyses.append({
+            'format': list(r.hgetall('stat:format')),
+            'size': retrieve_size_stats(r)
+        })
+    if pretty:
         return json.dumps(analyses, indent=4, sort_keys=True)
     return jsonify(analyses)

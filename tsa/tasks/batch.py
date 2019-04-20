@@ -5,10 +5,26 @@ import rdflib
 import redis
 from atenvironment import environment
 from rdflib.namespace import RDF
+from rdflib import Namespace
 
 from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.tasks.analyze import analyze, process_endpoint
+
+
+def _log_dataset_distribution(g, r, log, access, endpoint):
+    dcat = Namespace('http://www.w3.org/ns/dcat#')
+    accesses = frozenset(access + dump + endpoint)
+    pipe = r.pipeline()
+    for ds in g.subjects(RDF.type, dcat.Dataset):
+        r.sadd('dcatds', str(ds))
+        key = f'dsdistr:{ds!s}'
+        for dist in g.objects(ds, dcat.distribution):
+            for accessURL in g.objects(dist, dcat.accessURL):
+                if str(accessURL) in accesses:
+                    log.debug('Distribution {accessURL!s} from DCAT dataset {ds!s}')
+                    r.sadd(key, str(accessURL))
+    pipe.execute()
 
 
 @celery.task
@@ -27,22 +43,27 @@ def inspect_catalog(key, redis_cfg):
         log.debug('Failed to parse graph')
         return 0
 
-    for d in g.subjects(RDF.type, rdflib.URIRef('http://www.w3.org/ns/dcat#Distribution')):
-        for access in g.objects(d, rdflib.URIRef('http://www.w3.org/ns/dcat#accessURL')):
-            log.debug(f'Scheduling analysis of {access!s}')
-            analyze.si(str(access)).delay()
+    distributions = []
+    endpoints = []
+    dcat = Namespace('http://www.w3.org/ns/dcat#')
+    for d in g.subjects(RDF.type, dcat.Distribution)):
+        for access in g.objects(d, dcat.accessURL)):
+            distributions.append(str(access))
     for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
         for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
-            log.debug(f'Scheduling analysis of {dump!s}')
-            analyze.si(str(dump)).delay()
+            distributions.append(str(dump))
         for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
-            log.debug(f'Scheduling analysis of {endpoint!s}')
-            process_endpoint.si(str(endpoint)).delay()
+            endpoints.append(str(endpoint))
+
+    _log_dataset_distribution(g, r, log, distributions, endpoints)
+
+    tasks = [analyze.si(a) for a in distributions]
+    tasks.extend(process_endpoint.si(e) for e in endpoints)
+    return group(tasks).apply_async()
 
 
 @celery.task
 def inspect_endpoint(iri):
     """Extract DCAT datasets from the given endpoint and schedule their analysis."""
     inspector = SparqlEndpointAnalyzer()
-    for key in inspector.peek_endpoint(iri):
-        inspect_catalog.delay(key)
+    return group(inspect_catalog.si(key) for key in inspector.peek_endpoint(iri)).apply_async()
