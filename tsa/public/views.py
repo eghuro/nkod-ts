@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Public section, including homepage and signup."""
 import json
-import logging
 from collections import OrderedDict, defaultdict
 
 import redis
@@ -11,34 +10,11 @@ from celery import group
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
-from tsa.tasks.analyze import analyze, process_endpoint
-from tsa.tasks.batch import inspect_catalog, inspect_endpoint
 from tsa.tasks.query import index_distribution_query
-from tsa.tasks.system import hello, system_check
+from .stat import retrieve_size_stats
+
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
-
-
-@blueprint.route('/api/v1/test/base')
-def test_basic():
-    """Basic test returning hello world."""
-    return 'Hello world!'
-
-
-@blueprint.route('/api/v1/test/job')
-def test_celery():
-    """Hello world test using Celery task."""
-    r = hello.delay()
-    return r.get()
-
-
-@blueprint.route('/api/v1/test/system')
-def test_system():
-    """Test systems and provide a hello world."""
-    x = (system_check.s() | hello.si()).delay().get()
-    log = logging.getLogger(__name__)
-    log.info(f'System check result: {x!s}')
-    return str(x)
 
 
 @blueprint.route('/api/v1/analyze', methods=['GET'])
@@ -54,62 +30,6 @@ def api_analyze_get(redis_url):
             abort(404)
         else:
             return jsonify(json.loads(r.get(key)))
-    else:
-        abort(400)
-
-
-@blueprint.route('/api/v1/analyze/distribution', methods=['POST'])
-def api_analyze_iri():
-    """Analyze a distribution."""
-    iri = request.args.get('iri', None)
-
-    if iri is not None:
-        current_app.logger.info(f'Analyzing distribution for: {iri}')
-        if rfc3987.match(iri):
-            analyze.delay(iri)
-            return 'OK'
-        abort(400)
-    else:
-        iris = []
-        for iri in request.get_json():
-            if rfc3987.match(iri):
-                iris.append(iri)
-        for iri in iris:
-            current_app.logger.info(f'Analyzing distribution for: {iri}')
-            analyze.delay(iri)
-        return 'OK'
-
-
-@blueprint.route('/api/v1/analyze/endpoint', methods=['POST'])
-def api_analyze_endpoint():
-    """Analyze an Endpoint."""
-    iri = request.args.get('sparql', None)
-
-    current_app.logger.info(f'Analyzing SPARQL endpoint: {iri}')
-
-    if rfc3987.match(iri):
-        (process_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
-        return 'OK'
-    abort(400)
-
-
-@blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
-def api_analyze_catalog():
-    """Analyze a catalog."""
-    if 'iri' in request.args:
-        iri = request.args.get('iri', None)
-        current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
-        if rfc3987.match(iri):
-            (inspect_catalog.si(iri) | index_distribution_query.si(iri)).apply_async()
-            return 'OK'
-        abort(400)
-    elif 'sparql' in request.args:
-        iri = request.args.get('sparql', None)
-        current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
-        if rfc3987.match(iri):
-            (inspect_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
-            return 'OK'
-        abort(400)
     else:
         abort(400)
 
@@ -131,71 +51,6 @@ def distr_index(redis_url):
     abort(400)
 
 
-@blueprint.route('/api/v1/stat/format', methods=['GET'])
-@environment('REDIS')
-def stat_format(redis_url):
-    """List distribution formats logged."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(r.hgetall('stat:format'))
-
-
-@blueprint.route('/api/v1/stat/failed', methods=['GET'])
-@environment('REDIS')
-def stat_failed(redis_url):
-    """List failed distributions."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(list(r.smembers('stat:failed')))
-
-
-@blueprint.route('/api/v1/stat/size', methods=['GET'])
-@environment('REDIS')
-def stat_size(redis_url):
-    """List min, max and average distribution size."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(retrieve_size_stats(r))
-
-
-def retrieve_size_stats(r):
-    lst = sorted(r.lrange('stat:size', 0, -1))
-    current_app.logger.info(str(lst))
-    import statistics
-    try:
-        mode = statistics.mode(lst)
-    except statistics.StatisticsError:
-        mode = None
-    try:
-        mean = statistics.mean(lst)
-    except statistics.StatisticsError:
-        mean = None
-    try:
-        stdev = statistics.stdev(lst, mean)
-    except statistics.StatisticsError:
-        stdev = None
-    try:
-        var = statistics.variance(lst, mean)
-    except statistics.StatisticsError:
-        var = None
-
-    try:
-        minimum = min(lst)
-    except ValueError:
-        minimum = None
-
-    try:
-        maximum = max(lst)
-    except ValueError:
-        maximum = None
-
-    return {
-        'min': minimum,
-        'max': maximum,
-        'mean': mean,
-        'mode': mode,
-        'stdev': stdev,
-        'var': var
-    }
-
-
 def graph_iris(r):
     for e in r.smembers('endpoints'):
         for g in r.smembers(f'graphs:{e}'):
@@ -213,7 +68,7 @@ def get_known_distributions(redis_url):
 @blueprint.route('/api/v1/query/analysis', methods=['GET'])
 def known_distributions():
     """List known distributions and endpoints without failed or skipped ones."""
-    return jsonify(list(get_known_distributions))
+    return jsonify(list(get_known_distributions()))
 
 
 def skip(iri, r):
