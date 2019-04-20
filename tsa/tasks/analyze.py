@@ -90,7 +90,7 @@ def analyze(self, iri, redis_url):
                     log.error(f'One of the files in archive {iri} is too large ({e.name})')
                     for sub_iri, _ in lst:
                         log.debug(f'Expire {sub_iri}')
-                        red.expire(f'data:{sub_iri}', 1)
+                        red.expire(f'data:{sub_iri}', 0)
                 else:
                     for sub_iri, guess in lst:
                         yield index.si(sub_iri, guess)
@@ -155,7 +155,7 @@ def store_content(iri, r, red):
         for chunk in r.iter_content(chunk_size=chsize):
             if chunk:
                 if len(chunk) + conlen > 512 * 1024 * 1024:
-                    red.expire(key, 1)
+                    red.expire(key, 0)
                     raise SizeException(iri)
                 red.append(key, chunk)
                 conlen = conlen + len(chunk)
@@ -212,7 +212,7 @@ def store_analysis(results, iri, redis_cfg):
     red.set(key_result, json.dumps(results))
     red.sadd('purgeable', key_result)
     red.expire(key_result, 30 * 24 * 60 * 60)  # 30D
-    red.expire(f'data:{iri!s}', 1)  # trash original content
+    red.expire(f'data:{iri!s}', 0)  # trash original content
 
 
 @celery.task
@@ -257,8 +257,8 @@ def process_endpoint(iri, redis_cfg):
             if red.sadd(key, g) > 0:
                 tasks.append(index_named.si(iri, g))
                 tasks.append(analyze_named.si(iri, g))
-        group(tasks).apply_async()
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
+        return group(tasks).apply_async()
     else:
         log = logging.getLogger(__name__)
         log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')

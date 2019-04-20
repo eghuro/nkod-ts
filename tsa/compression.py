@@ -43,7 +43,7 @@ def decompress_7z(iri, r, red):
                 for block in entry.get_blocks():
                     if len(block) + conlen > 512 * 1024 * 1024:
                         # Will fail due to redis limitation
-                        red.expire(sub_key, 1)
+                        red.expire(sub_key, 0)
                         raise SizeException(name)
 
                     red.append(sub_key, block)
