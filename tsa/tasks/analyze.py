@@ -250,8 +250,6 @@ def process_endpoint(iri, redis_cfg):
     red.sadd('purgeable', key)
     if red.sadd(key, iri) > 0:
         a = SparqlEndpointAnalyzer()
-        # run analyzer and indexer on the endpoint instead of parsing the graph
-        # group(index_endpoint.si(iri), analyze_endpoint.si(iri)).delay()
         tasks = []
         for g in a.get_graphs_from_endpoint(iri):
             key = f'graphs:{iri}'
@@ -266,18 +264,26 @@ def process_endpoint(iri, redis_cfg):
         log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
-# """Analyze triples in the endpoint."""
-# return group(analyze_named.si(iri, g) for g in a.get_graphs_from_endpoint(iri)).apply_async()
-
-
 @celery.task
 @environment('REDIS')
 def analyze_named(endpoint_iri, named_graph, redis_cfg):
     """Analyze triples in the named graph of the endpoint."""
-    red = redis.StrictRedis().from_url(redis_cfg)
-    g = SparqlGraph(endpoint_iri, named_graph)
     key = f'analyze:{endpoint_iri!s}:{named_graph!s}'
+    tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
+    return chord(run_one_named_analyzer.si(token, endpoint_iri, named_graph) for token in tokens)(store_named_analysis.si(key))
+
+
+@celery.task
+def run_one_named_analyzer(token, endpoint_iri, named_graph):
+    g = SparqlGraph(endpoint_iri, named_graph)
+    a = get_analyzer(token)
+    return json.dumps(a.analyze(g))
+
+
+@celery.task
+@environment('REDIS')
+def store_named_analysis(results, key, redis_cfg):
+    red = redis.StrictRedis().from_url(redis_cfg)
     red.sadd('purgeable', key)
-    analyzers = [it() for it in AbstractAnalyzer.__subclasses__()]
-    red.set(key, json.dumps([a.analyze(g) for a in analyzers]))
+    red.set(key, json.dumps(results))
     red.expire(key, 30 * 24 * 60 * 60)  # 30D

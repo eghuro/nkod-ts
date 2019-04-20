@@ -1,6 +1,7 @@
 """Endpoints to start the analysis."""
 import rfc3987
 from flask import Blueprint, abort, current_app, request
+from celery import group
 
 from tsa.tasks.analyze import analyze, process_endpoint
 from tsa.tasks.batch import inspect_catalog, inspect_endpoint
@@ -25,9 +26,11 @@ def api_analyze_iri():
         for iri in request.get_json():
             if rfc3987.match(iri):
                 iris.append(iri)
+        tasks = []
         for iri in iris:
             current_app.logger.info(f'Analyzing distribution for: {iri}')
-            analyze.delay(iri)
+            tasks.append(analyze.si(iri))
+        group(tasks).apply_async()
         return 'OK'
 
 
