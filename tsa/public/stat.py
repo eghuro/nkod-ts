@@ -1,5 +1,7 @@
 """Stat endpoints."""
+import math
 import redis
+import statistics
 from atenvironment import environment
 from flask import Blueprint, current_app, jsonify
 
@@ -30,11 +32,19 @@ def stat_size(redis_url):
     return jsonify(retrieve_size_stats(r))
 
 
+def convert_size(size_bytes):
+   if size_bytes == 0:
+       return "0B"
+   size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+   i = int(math.floor(math.log(size_bytes, 1024)))
+   p = math.pow(1024, i)
+   s = round(size_bytes / p, 2)
+   return "%s %s" % (s, size_name[i])
+
+
 def retrieve_size_stats(r):
     """Load sizes from redis and calculate some stats about it."""
-    lst = sorted(r.lrange('stat:size', 0, -1))
-    current_app.logger.info(str(lst))
-    import statistics
+    lst = sorted([int(x) for x in r.lrange('stat:size', 0, -1)])
     try:
         mode = statistics.mode(lst)
     except statistics.StatisticsError:
@@ -63,10 +73,10 @@ def retrieve_size_stats(r):
         maximum = None
 
     return {
-        'min': minimum,
-        'max': maximum,
-        'mean': mean,
-        'mode': mode,
-        'stdev': stdev,
+        'min': convert_size(minimum),
+        'max': convert_size(maximum),
+        'mean': convert_size(mean),
+        'mode': convert_size(mode),
+        'stdev': convert_size(stdev),
         'var': var
     }
