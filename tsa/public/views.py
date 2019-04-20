@@ -9,6 +9,7 @@ from atenvironment import environment
 from celery import group
 from flask import Blueprint, abort, current_app, jsonify, request
 
+from tsa.analyzer import SkosAnalyzer
 from tsa.cache import cached
 from tsa.monitor import Monitor
 from tsa.tasks.query import index_distribution_query
@@ -110,6 +111,9 @@ def gather_analyses(iris, r):
     predicates = defaultdict(int)
     classes = defaultdict(int)
 
+    external = defaultdict(set)
+    internal = defaultdict(set)
+
     for iri in iris:
         if skip(iri, r):
             continue
@@ -128,12 +132,63 @@ def gather_analyses(iris, r):
             if 'classes' in analysis:
                 for c in analysis['classes']:
                     classes[c] += int(analysis['classes'][c])
+            if 'external' in analysis:
+                external[iri].update(analysis['external']['not_subject'] + analysis['external']['no_type'])
+            if 'concept' in analysis:
+                internal[iri].update(analysis['concept'].keys())
+                internal[iri].update(analysis['schema'].keys())
+                internal[iri].update(analysis['collection'])
+                internal[iri].update(analysis['orderedCollection'])
+
             analyses.append({'iri': iri, 'analysis': analysis})
+
+    r.sadd('relationship', 'skosCross', 'skosTransitive')
+
+    cnt = 0
+
+    for iri in iris:
+        for common in internal[iri].union(external['iri']):
+            for reltype in SkosAnalyzer.relations:
+                key = f'related:{reltype}:{common}'
+                for ds in r.smembers(key):
+                    log_related('skosTransitive', common, iri, ds, r)
+                    cnt = cnt + 6
+
+    for iri_in in iris:
+        for iri_out in iris:
+            for common in external[iri_out].intersection(internal[iri_in]):
+                log_related('skosCross', common, iri_in, iri_out, r)
+                cnt = cnt + 6
+
+    log.info(f'Indexed {cnt!s} records')
 
     analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
     analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
 
     return analyses
+
+
+def log_related(rel_type, common, iri_in, iri_out, r):
+    exp = 30 * 24 * 60 * 60  # 30D
+    pipe = r.pipeline()
+    pipe.sadd(f'related:{rel_type}:{common!s}', iri_in)
+    pipe.sadd(f'related:{rel_type}:{common!s}', iri_out)
+    pipe.sadd(f'key:{iri_in!s}', common)
+    pipe.sadd(f'key:{iri_out!s}', common)
+    pipe.sadd(f'reltype:{iri_in!s}', rel_type)
+    pipe.sadd(f'reltype:{iri_out!s}', rel_type)
+    pipe.expire(f'related:{rel_type}:{common!s}', exp)
+    pipe.expire(f'key:{iri_in!s}', exp)
+    pipe.expire(f'key:{iri_out!s}', exp)
+    pipe.expire(f'reltype:{iri_in!s}', exp)
+    pipe.expire(f'reltype:{iri_out!s}', exp)
+    pipe.sadd('purgeable', f'related:{rel_type}:{common!s}', f'key:{iri_in!s}', f'key:{iri_out!s}', f'reltype:{iri_in!s}', f'reltype:{iri_out!s}')
+
+    # distribution queries no longer valid
+    pipe.expire(f'distrquery:{iri_in!s}', 0)
+    pipe.expire(f'distrquery:{iri_out!s}', 0)
+
+    pipe.execute()
 
 
 def fetch_missing(iris, r):
@@ -215,4 +270,7 @@ def cleanup(redis_url):
         extra.extend(Monitor.KEYS)
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    cache_items = [key for key in r.keys() if key.startswith(current_app.config['CACHE_KEY_PREFIX'])]
+    current_app.logger.debug('Flask cache items: ' + str(cache_items))
+    extra.extend(cache_items)
     r.delete([key for key in r.smembers('purgeable')] + extra)

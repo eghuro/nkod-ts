@@ -113,6 +113,7 @@ class SkosAnalyzer(AbstractAnalyzer):
     """RDF dataset analyzer focusing on SKOS."""
 
     token = 'skos'
+    relations = ['inScheme', 'collection', 'exactMatch', 'mappingRelation', 'closeMatch', 'relatedMatch', 'broadNarrow']
 
     @staticmethod
     def _scheme_count_query(scheme):
