@@ -2,6 +2,7 @@
 """Application configuration."""
 
 import os
+import uuid
 
 import raven
 
@@ -9,7 +10,7 @@ import raven
 class Config(object):
     """Base configuration."""
 
-    SECRET_KEY = os.environ.get('NKOD_TSA_SECRET', '017bc90c-82fe-4452-b7a7-853d100ad35a')  # TODO: Change me
+    SECRET_KEY = os.environ.get('NKOD_TSA_SECRET', str(uuid.uuid4()))
     APP_DIR = os.path.abspath(os.path.dirname(__file__))  # This directory
     PROJECT_ROOT = os.path.abspath(os.path.join(APP_DIR, os.pardir))
     RELEASE = raven.fetch_git_sha(PROJECT_ROOT)
