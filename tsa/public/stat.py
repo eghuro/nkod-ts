@@ -1,9 +1,10 @@
+"""Stat endpoints."""
 import redis
 from atenvironment import environment
 from flask import Blueprint, current_app, jsonify
 
-
 blueprint = Blueprint('stat', __name__, static_folder='../static')
+
 
 @blueprint.route('/api/v1/stat/format', methods=['GET'])
 @environment('REDIS')
@@ -30,6 +31,7 @@ def stat_size(redis_url):
 
 
 def retrieve_size_stats(r):
+    """Load sizes from redis and calculate some stats about it."""
     lst = sorted(r.lrange('stat:size', 0, -1))
     current_app.logger.info(str(lst))
     import statistics

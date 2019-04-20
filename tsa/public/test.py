@@ -1,7 +1,9 @@
+"""Test endpoints."""
 import logging
-from flask import Blueprint
-from tsa.tasks.system import hello, system_check
 
+from flask import Blueprint
+
+from tsa.tasks.system import hello, system_check
 
 blueprint = Blueprint('test', __name__, static_folder='../static')
 

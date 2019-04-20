@@ -136,6 +136,7 @@ class SparqlEndpointAnalyzer(object):
             yield key
 
     def get_graphs_from_endpoint(self, endpoint):
+        """Extract named graphs from the given endpoint."""
         sparql = SPARQLWrapper(endpoint, returnFormat=N3)
         sparql.setRequestMethod(POSTDIRECTLY)
         sparql.setMethod('POST')

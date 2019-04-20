@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Public section, including homepage and signup."""
+"""Query endpoints."""
 import json
 from collections import OrderedDict, defaultdict
 
@@ -11,8 +11,8 @@ from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.cache import cached
 from tsa.tasks.query import index_distribution_query
-from .stat import retrieve_size_stats
 
+from .stat import retrieve_size_stats
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -51,16 +51,16 @@ def distr_index(redis_url):
     abort(400)
 
 
-def graph_iris(r):
+def _graph_iris(r):
     for e in r.smembers('endpoints'):
         for g in r.smembers(f'graphs:{e}'):
             yield f'{e}/{g}'
 
 
 @environment('REDIS')
-def get_known_distributions(redis_url):
+def _get_known_distributions(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    distr_endpoints = r.smembers('distributions').union(frozenset(graph_iris(r)))
+    distr_endpoints = r.smembers('distributions').union(frozenset(_graph_iris(r)))
     failed_skipped = r.smembers('stat:failed').union(r.smembers('stat:skipped'))
     return distr_endpoints.difference(failed_skipped)
 
@@ -68,7 +68,7 @@ def get_known_distributions(redis_url):
 @blueprint.route('/api/v1/query/analysis', methods=['GET'])
 def known_distributions():
     """List known distributions and endpoints without failed or skipped ones."""
-    return jsonify(list(get_known_distributions()))
+    return jsonify(list(_get_known_distributions()))
 
 
 def skip(iri, r):
@@ -161,10 +161,9 @@ def batch_analysis(redis_url):
     Get a list of distributions in request body as JSON, compile analyses,
     query the index return the compiled report.
     """
-
     lst = request.get_json()
     if lst is None:
-        lst = get_known_distributions()
+        lst = _get_known_distributions()
 
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     analyses = gather_analyses(lst, r)

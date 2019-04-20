@@ -21,6 +21,7 @@ def index_named(iri, named):
 @celery.task
 @environment('REDIS')
 def run_one_named_indexer(token, iri, named, redis_cfg):
+    """Run indexer on the named graph of the endpoint."""
     g = SparqlGraph(iri, named)
     r = redis.StrictRedis.from_url(redis_cfg)
     return run_indexer(token, f'{iri}/{named}', g, r)
@@ -74,6 +75,7 @@ def get_analyzer(analyzer_token):
 @celery.task
 @environment('REDIS')
 def run_one_indexer(token, iri, format_guess, redis_cfg):
+    """Extract graph from redis and run indexer identified by token on it."""
     log = logging.getLogger(__name__)
     r = redis.StrictRedis.from_url(redis_cfg)
     key = f'data:{iri!s}'

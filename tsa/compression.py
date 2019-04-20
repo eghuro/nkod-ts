@@ -1,3 +1,4 @@
+"""Module for handling compressed distribution files."""
 import logging
 
 from sys import platform
@@ -15,10 +16,12 @@ class SizeException(BaseException):
     """Indicating a subfile is too large."""
 
     def __init__(self, name):
+        """Record the file name."""
         self.name = name
 
 
 def decompress_7z(iri, r, red):
+    """Download a 7z file, decompress it and store contents in redis."""
     log = logging.getLogger(__name__)
     log.debug(f'Downloading {iri} into an in-memory buffer')
     fp = BytesIO(r.content)

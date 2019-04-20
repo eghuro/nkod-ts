@@ -1,9 +1,10 @@
+"""Endpoints to start the analysis."""
 import rfc3987
 from flask import Blueprint, abort, current_app, request
+
 from tsa.tasks.analyze import analyze, process_endpoint
 from tsa.tasks.batch import inspect_catalog, inspect_endpoint
 from tsa.tasks.query import index_distribution_query
-
 
 blueprint = Blueprint('analyze', __name__, static_folder='../static')
 

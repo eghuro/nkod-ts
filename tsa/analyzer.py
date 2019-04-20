@@ -206,12 +206,10 @@ class SkosAnalyzer(AbstractAnalyzer):
         for row in graph.query(q):
             yield row['collection'], 'collection'
 
-
         for token in ['exactMatch', 'mappingRelation', 'closeMatch', 'relatedMatch']:
             for row in graph.query(f'SELECT ?a ?b WHERE {{ ?a <http://www.w3.org/2004/02/skos/core#{token}> ?b. }}'):
                 yield row['a'], token
                 yield row['b'], token
-
 
         for row in graph.query("""
         SELECT ?a ?b WHERE {
@@ -263,7 +261,7 @@ class GenericAnalyzer(AbstractAnalyzer):
 
         external_1 = objects.difference(subjects)
         external_2 = objects.difference(locally_typed)
-        #toto muze byt SKOS Concept definovany jinde
+        # toto muze byt SKOS Concept definovany jinde
 
         summary = {
             'triples': triples,
