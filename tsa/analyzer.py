@@ -252,7 +252,7 @@ class GenericAnalyzer(AbstractAnalyzer):
         #   - objekty, ktere nejsou subjektem v tomto grafu
         #   - objekty, ktere nemaji typ v tomto grafu
 
-        q = 'SELECT DISTICNT ?o WHERE { ?s ?p ?o . }'
+        q = 'SELECT DISTINCT ?o WHERE { ?s ?p ?o . }'
         objects = set([row['o'] for row in graph.query(q)])
         q = 'SELECT DISTINCT ?s WHERE { ?s ?p ?o. }'
         subjects = set([row['s'] for row in graph.query(q)])
