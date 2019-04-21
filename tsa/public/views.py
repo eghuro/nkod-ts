@@ -105,8 +105,9 @@ def missing(iri, r):
     return not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri)
 
 
-def gather_analyses(iris, r):
+def gather_analyses(iris, transitive, cross, r):
     """Compile analyses for all iris from all analyzers."""
+    current_app.logger.info(f'Gather analyses')
     analyses = []
     predicates = defaultdict(int)
     classes = defaultdict(int)
@@ -126,6 +127,7 @@ def gather_analyses(iris, r):
             analysis = json.loads(analysis)
             if analysis is None:
                 continue
+            current_app.logger.info(f'{analysis!s}')
             if 'predicates' in analysis:
                 for p in analysis['predicates']:
                     predicates[p] += int(analysis['predicates'][p])
@@ -141,26 +143,30 @@ def gather_analyses(iris, r):
                 internal[iri].update(analysis['orderedCollection'])
 
             analyses.append({'iri': iri, 'analysis': analysis})
-
+    current_app.logger.info(f'Gathered initial, {len(predicates.keys())}')
     r.sadd('relationship', 'skosCross', 'skosTransitive')
-
     cnt = 0
-
-    for iri in iris:
-        for common in internal[iri].union(external['iri']):
-            for reltype in SkosAnalyzer.relations:
-                key = f'related:{reltype}:{common}'
+    if transitive:
+        for iri in iris:
+            for common in internal[iri].union(external['iri']):
+                for reltype in SkosAnalyzer.relations:
+                    key = f'related:{reltype}:{common}'
+                    for ds in r.smembers(key):
+                        log_related('skosTransitive', common, iri, ds, r)
+                        cnt = cnt + 6
+                key = f'related:sameAs:{common}'
                 for ds in r.smembers(key):
-                    log_related('skosTransitive', common, iri, ds, r)
+                    log_related('sameAsTransitive', common, iri, ds, r)
                     cnt = cnt + 6
+        current_app.logger.info(f'Calculated transitive')
 
-    for iri_in in iris:
-        for iri_out in iris:
-            for common in external[iri_out].intersection(internal[iri_in]):
-                log_related('skosCross', common, iri_in, iri_out, r)
-                cnt = cnt + 6
-
-    log.info(f'Indexed {cnt!s} records')
+    if cross:
+        for iri_in in iris:
+            for iri_out in iris:
+                for common in external[iri_out].intersection(internal[iri_in]):
+                    log_related('cross', common, iri_in, iri_out, r)
+                    cnt = cnt + 6
+    current_app.logger.info(f'Indexed {cnt!s} records')
 
     analyses.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
     analyses.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
@@ -201,7 +207,9 @@ def fetch_missing(iris, r):
 
     current_app.logger.info('Fetching missing query results')
     t = group(index_distribution_query.si(iri) for iri in missing_query).apply_async()
+    current_app.logger.info('Call get')
     t.get()
+    current_app.logger.info('Leaving')
 
 
 def gather_queries(iris, r):
@@ -241,11 +249,13 @@ def batch_analysis(redis_url):
     r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     small = 'small' in request.args
     pretty = 'pretty' in request.args
-    return batch(lst, r, small, pretty, True)
+    transitive = 'noTransitive' not in request.args
+    cross = 'noCross' not in request.args
+    return batch(lst, r, transitive, cross, small, pretty, True)
 
 
-def batch(lst, r, small=False, pretty=False, stats=False):
-    analyses = gather_analyses(lst, r)
+def batch(lst, r, transitive=False, cross=False, small=False, pretty=False, stats=False):
+    analyses = gather_analyses(lst, transitive, cross, r)
     if small:
         current_app.logger.info('Small')
         analyses = analyses[-2:]
