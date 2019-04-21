@@ -3,6 +3,7 @@ import logging
 
 import rdflib
 import redis
+import rfc3987
 from atenvironment import environment
 from celery import group
 from rdflib.namespace import RDF
@@ -50,12 +51,21 @@ def inspect_catalog(key, redis_cfg):
     dcat = Namespace('http://www.w3.org/ns/dcat#')
     for d in g.subjects(RDF.type, dcat.Distribution):
         for access in g.objects(d, dcat.accessURL):
-            distributions.append(str(access))
+            if rfc3987.match(str(access)):
+                distributions.append(str(access))
+            else:
+                log.warn(f'{access!s} is not a valid access URL')
     for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
         for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
-            distributions.append(str(dump))
+            if rfc3987.match(str(dump)):
+                distributions.append(str(dump))
+            else:
+                log.warn(f'{dump!s} is not a valid dump URL')
         for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
-            endpoints.append(str(endpoint))
+            if rfc3987.match(str(endpoint)):
+                endpoints.append(str(endpoint))
+            else:
+                log.warn(f'{endpoint!s} is not a valid endpoint URL')
 
     _log_dataset_distribution(g, r, log, distributions, endpoints)
 

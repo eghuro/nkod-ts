@@ -176,7 +176,9 @@ def fetch(iri, log, red):
             log.info(f'Analyze {iri} in {wait} because of crawl-delay')
             raise RobotsRetry(wait)
 
-    r = requests.get(iri, stream=True, headers={'User-Agent': user_agent})
+    timeout = 512 * 1024 / 500
+    log.debug(f'Timeout {timeout!s} for {iri}')
+    r = requests.get(iri, stream=True, headers={'User-Agent': user_agent}, timeout=timeout)
     r.raise_for_status()
 
     delay = robots_cache.get(iri).delay

@@ -2,6 +2,7 @@
 import logging
 
 import redis
+import rfc3987
 from atenvironment import environment
 from rdflib import Graph
 from rdflib.plugins.sparql.results.jsonresults import JSONResult
@@ -114,17 +115,24 @@ class SparqlEndpointAnalyzer(object):
         if named is not None:
             return f'{str1} <{endpoint}>. {str2} from <{named}> {str3}'
         else:
+            logging.getLogger(__name__).warn('No named graph when constructing catalog from {endpoint!s}')
             return f'{str1} <{endpoint}>. {str2} {str3}'
 
     @environment('REDIS')
     def peek_endpoint(self, endpoint, redis_url):
         """Extract DCAT datasets from the given endpoint and store them in redis."""
+        log = logging.getLogger(__name__)
+        if not rfc3987.match(endpoint):
+            log.warn(f'{endpoint!s} is not a valid endpoint URL')
+            return
         sparql = SPARQLWrapper(endpoint, returnFormat=N3)
         sparql.setRequestMethod(POSTDIRECTLY)
         sparql.setMethod('POST')
         for g in self.get_graphs_from_endpoint(endpoint):
+            if not rfc3987.match(g):
+                log.warn(f'{endpoint!s} is not a valid graph URL')
+                continue
             sparql.setQuery(self.__query(endpoint, g))
-
             ret = sparql.query().convert()
             g = Graph()
             g.parse(data=ret, format='n3')

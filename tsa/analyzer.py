@@ -1,6 +1,7 @@
 """Dataset analyzer."""
 
 import logging
+import rfc3987
 from abc import ABC
 from collections import defaultdict
 
@@ -138,6 +139,7 @@ class SkosAnalyzer(AbstractAnalyzer):
 
     def analyze(self, graph):
         """Analysis of SKOS concepts and related properties presence in a dataset."""
+        log = logging.getLogger(__name__)
         concept_count = dict()
         schemes_count = dict()
         top_concept = dict()
@@ -149,6 +151,9 @@ class SkosAnalyzer(AbstractAnalyzer):
         """)]
 
         for c in concepts:
+            if not rfc3987.match(c):
+                log.debug(f'{c} is a not valid IRI')
+                continue
             for row in graph.query(SkosAnalyzer._count_query(c)):
                 concept_count[c] = row['count']
 
@@ -160,18 +165,23 @@ class SkosAnalyzer(AbstractAnalyzer):
         """)]
 
         for schema in schemes:
+            if not rfc3987.match(schema):
+                log.debug(f'{schema} is a not valid IRI')
+                continue
             for row in graph.query(SkosAnalyzer._scheme_count_query(str(schema))):
                 schemes_count[schema] = row['count']
 
         for schema in schemes:
+            if not rfc3987.match(schema):
+                continue
             top_concept[schema] = [row['concept'] for row in graph.query(SkosAnalyzer._scheme_top_concept(str(schema)))]
 
         collections = [row['coll'] for row in graph.query("""
         SELECT DISTINCT ?coll WHERE {
             OPTIONAL { ?coll a <http://www.w3.org/2004/02/skos/core#Collection>. }
             OPTIONAL { ?coll a <http://www.w3.org/2004/02/skos/core#OrderedCollection>. }
-            OPTIONAL { ?_ <http://www.w3.org/2004/02/skos/core#member> ?coll. }
-            OPTIONAL { ?coll <http://www.w3.org/2004/02/skos/core#memberList> ?_. }
+            OPTIONAL { ?a <http://www.w3.org/2004/02/skos/core#member> ?coll. }
+            OPTIONAL { ?coll <http://www.w3.org/2004/02/skos/core#memberList> ?b. }
         }
         """)]
 
@@ -254,11 +264,11 @@ class GenericAnalyzer(AbstractAnalyzer):
         #   - objekty, ktere nemaji typ v tomto grafu
 
         q = 'SELECT DISTINCT ?o WHERE { ?s ?p ?o . FILTER (URI (?o))}'
-        objects = set([row['o'] for row in graph.query(q)])
-        q = 'SELECT DISTINCT ?s WHERE { ?s ?p ?o. }'
-        subjects = set([row['s'] for row in graph.query(q)])
-        q = 'SELECT DISTINCT ?s WHERE { ?s a ?t. }'
-        locally_typed = set([row['s'] for row in graph.query(q)])
+        objects = set([row['o'] for row in graph.query(q) if rfc3987.match(row['o'])])
+        q = 'SELECT DISTINCT ?s WHERE { ?s ?p ?o. FILTER (URI (?s))}'
+        subjects = set([row['s'] for row in graph.query(q) if rfc3987.match(row['s'])])
+        q = 'SELECT DISTINCT ?s WHERE { ?s a ?c. FILTER (URI (?s))}'
+        locally_typed = set([row['s'] for row in graph.query(q) if rfc3987.match(row['s'])])
 
         external_1 = objects.difference(subjects)
         external_2 = objects.difference(locally_typed)
