@@ -3,12 +3,12 @@ import logging
 
 import rdflib
 import redis
-from atenvironment import environment
 from celery import group
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.endpoint import SparqlGraph
+from tsa.extensions import redis_pool
 
 
 @celery.task
@@ -19,12 +19,10 @@ def index_named(iri, named):
 
 
 @celery.task
-@environment('REDIS')
-def run_one_named_indexer(token, iri, named, redis_cfg):
+def run_one_named_indexer(token, iri, named):
     """Run indexer on the named graph of the endpoint."""
     g = SparqlGraph(iri, named)
-    r = redis.StrictRedis.from_url(redis_cfg)
-    return run_indexer(token, f'{iri}/{named}', g, r)
+    return run_indexer(token, f'{iri}/{named}', g)
 
 
 @celery.task
@@ -34,7 +32,7 @@ def index(iri, format_guess):
     return group(run_one_indexer.si(token, iri, format_guess) for token in tokens).apply_async()
 
 
-def run_indexer(token, iri, g, r):
+def run_indexer(token, iri, g, red):
     """Get all available analyzers and let them find relationships."""
     log = logging.getLogger(__name__)
     exp = 30 * 24 * 60 * 60  # 30D
@@ -43,24 +41,24 @@ def run_indexer(token, iri, g, r):
     cnt = 0
     analyzer = get_analyzer(token)
     for key, rel_type in analyzer.find_relation(g):
-        pipe = r.pipeline()
-        log.debug(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
-        # pipe.sadd(f'related:{key!s}', iri)
-        pipe.sadd(f'related:{rel_type!s}:{key!s}', iri)
-        pipe.sadd(f'relationship', rel_type)
-        pipe.sadd(f'key:{iri!s}', key)
-        pipe.sadd(f'reltype:{iri!s}', rel_type)
+        with red.pipeline() as pipe:
+            log.debug(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
+            # pipe.sadd(f'related:{key!s}', iri)
+            pipe.sadd(f'related:{rel_type!s}:{key!s}', iri)
+            pipe.sadd(f'relationship', rel_type)
+            pipe.sadd(f'key:{iri!s}', key)
+            pipe.sadd(f'reltype:{iri!s}', rel_type)
 
-        # pipe.expire(f'related:{key!s}', exp)
-        pipe.expire(f'related:{rel_type!s}:{key!s}', exp)
-        pipe.expire(f'relationship', exp)
-        pipe.expire(f'key:{iri!s}', exp)
-        pipe.expire(f'reltype:{iri!s}', exp)
+            # pipe.expire(f'related:{key!s}', exp)
+            pipe.expire(f'related:{rel_type!s}:{key!s}', exp)
+            pipe.expire(f'relationship', exp)
+            pipe.expire(f'key:{iri!s}', exp)
+            pipe.expire(f'reltype:{iri!s}', exp)
 
-        pipe.sadd('purgeable', f'related:{rel_type!s}:{key!s}', f'relationship', f'key:{iri!s}', f'reltype:{iri!s}')
+            pipe.sadd('purgeable', f'related:{rel_type!s}:{key!s}', f'relationship', f'key:{iri!s}', f'reltype:{iri!s}')
 
-        cnt = cnt + 4
-        pipe.execute()
+            cnt = cnt + 4
+            pipe.execute()
 
     log.info(f'Indexed {cnt!s} records')
     return cnt
@@ -75,17 +73,16 @@ def get_analyzer(analyzer_token):
 
 
 @celery.task
-@environment('REDIS')
-def run_one_indexer(token, iri, format_guess, redis_cfg):
+def run_one_indexer(token, iri, format_guess):
     """Extract graph from redis and run indexer identified by token on it."""
     log = logging.getLogger(__name__)
-    r = redis.StrictRedis.from_url(redis_cfg)
+    red = redis.Redis(connection_pool=redis_pool)
     key = f'data:{iri!s}'
 
     log.debug('Parsing graph')
     try:
         g = rdflib.ConjunctiveGraph()
-        g.parse(data=r.get(key), format=format_guess)
+        g.parse(data=red.get(key), format=format_guess)
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return 0
@@ -93,4 +90,4 @@ def run_one_indexer(token, iri, format_guess, redis_cfg):
         log.debug('Failed to parse graph')
         return 0
 
-    return run_indexer(token, iri, g, r)
+    return run_indexer(token, iri, g, red)

@@ -1,7 +1,5 @@
 """Endpoints to start the analysis."""
 import redis
-import requests
-from atenvironment import environment
 import rfc3987
 from flask import Blueprint, abort, current_app, request
 from celery import group
@@ -9,6 +7,8 @@ from celery import group
 from tsa.tasks.analyze import analyze, process_endpoint
 from tsa.tasks.batch import inspect_catalog, inspect_endpoint
 from tsa.tasks.query import index_distribution_query
+from tsa.extensions import redis_pool
+from tsa.robots import session
 
 blueprint = Blueprint('analyze', __name__, static_folder='../static')
 
@@ -51,20 +51,21 @@ def api_analyze_endpoint():
 
 
 @blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
-@environment('REDIS')
-def api_analyze_catalog(redis_cfg):
+def api_analyze_catalog():
     """Analyze a catalog."""
-    r = redis.StrictRedis.from_url(redis_cfg)
     if 'iri' in request.args:
         iri = request.args.get('iri', None)
         current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
         if rfc3987.match(iri):
             key = f'catalog:{iri}'
-            req = requests.get(iri)
-            r.set(key, req.text)
-            exp = 30 * 24 * 60 * 60  # 30D
-            r.expire(key, exp)
-            r.sadd('purgeable', key)
+            req = session.get(iri)
+            red = redis.Redis(connection_pool=redis_pool)
+            with red.pipeline() as pipe:
+                pipe.set(key, req.text)
+                exp = 30 * 24 * 60 * 60  # 30D
+                pipe.expire(key, exp)
+                pipe.sadd('purgeable', key)
+                pipe.execute()
             inspect_catalog.si(key).apply_async()
             return 'OK'
         abort(400)

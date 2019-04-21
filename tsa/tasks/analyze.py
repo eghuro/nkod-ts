@@ -2,10 +2,9 @@
 import json
 import logging
 
-import rdflib
-import redis
 import requests
-from atenvironment import environment
+import redis
+import rdflib
 from celery import chord, group
 from reppy.robots import Robots
 
@@ -13,8 +12,9 @@ from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.compression import SizeException, decompress_7z
 from tsa.endpoint import SparqlEndpointAnalyzer, SparqlGraph
+from tsa.extensions import redis_pool
 from tsa.monitor import monitor
-from tsa.robots import robots_cache, user_agent
+from tsa.robots import robots_cache, user_agent, session
 from tsa.tasks.index import index, index_named
 
 
@@ -31,13 +31,12 @@ class Skip(BaseException):
 
 
 @celery.task(bind=True)
-@environment('REDIS')
-def analyze(self, iri, redis_url):
+def analyze(self, iri):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
-    red = redis.StrictRedis().from_url(redis_url)
 
     key = f'distributions'
+    red = redis.Redis(connection_pool=redis_pool)
     if red.sadd(key, iri) == 0:
         log.debug(f'Skipping distribution as it was recently analyzed: {iri!s}')
         return
@@ -47,8 +46,9 @@ def analyze(self, iri, redis_url):
     log.info(f'Analyzing {iri!s}')
 
     if iri.endswith('sparql'):
-        log.info(f'Guessing it is a SPARQL endpoint')
-        return process_endpoint.delay(iri)
+        log.info(f'Guessing it is a SPARQL endpoint, currently skipped')
+        return
+        #return process_endpoint.delay(iri)
 
     try:
         try:
@@ -65,7 +65,7 @@ def analyze(self, iri, redis_url):
             return {}
 
         if guess in ['application/x-7z-compressed']:
-            def gen_iri_guess(iri, r, red):
+            def gen_iri_guess(iri, r):
                 for sub_iri in decompress_7z(iri, r, red):
                     # TODO: asi zbytecne, archiv neoteviram vicekrat
                     if red.sadd(key, sub_iri) == 0:
@@ -81,10 +81,10 @@ def analyze(self, iri, redis_url):
                     else:
                         yield sub_iri, guess
 
-            def gen_tasks(iri, r, red):
+            def gen_tasks(iri, r):
                 lst = []
                 try:
-                    for x in gen_iri_guess(iri, r, red):
+                    for x in gen_iri_guess(iri, r):
                         lst.append(x)
                 except SizeException as e:
                     log.error(f'One of the files in archive {iri} is too large ({e.name})')
@@ -95,7 +95,7 @@ def analyze(self, iri, redis_url):
                     for sub_iri, guess in lst:
                         yield index.si(sub_iri, guess)
                         yield run_analyzer.si(sub_iri, guess)
-            pipeline = group([t for t in gen_tasks(iri, r, red)])
+            pipeline = group([t for t in gen_tasks(iri, r)])
         else:
             try:
                 store_content(iri, r, red)
@@ -152,15 +152,18 @@ def store_content(iri, r, red):
     if not red.exists(key):
         chsize = 1024
         conlen = 0
-        for chunk in r.iter_content(chunk_size=chsize):
-            if chunk:
-                if len(chunk) + conlen > 512 * 1024 * 1024:
-                    red.expire(key, 0)
-                    raise SizeException(iri)
-                red.append(key, chunk)
-                conlen = conlen + len(chunk)
-        red.expire(key, 30 * 24 * 60 * 60)  # 30D
-        red.sadd('purgeable', key)
+        with red.pipeline() as pipe:
+            for chunk in r.iter_content(chunk_size=chsize):
+                if chunk:
+                    if len(chunk) + conlen > 512 * 1024 * 1024:
+                        pipe.expire(key, 0)
+                        pipe.execute()
+                        raise SizeException(iri)
+                    pipe.append(key, chunk)
+                    conlen = conlen + len(chunk)
+            pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
+            pipe.sadd('purgeable', key)
+            pipe.execute()
         monitor.log_size(conlen)
 
 
@@ -178,7 +181,7 @@ def fetch(iri, log, red):
 
     timeout = 512 * 1024 / 500
     log.debug(f'Timeout {timeout!s} for {iri}')
-    r = requests.get(iri, stream=True, headers={'User-Agent': user_agent}, timeout=timeout)
+    r = session.get(iri, stream=True, headers={'User-Agent': user_agent}, timeout=timeout)
     r.raise_for_status()
 
     delay = robots_cache.get(iri).delay
@@ -198,36 +201,36 @@ def fetch(iri, log, red):
 
 
 @celery.task
-@environment('REDIS')
-def run_analyzer(iri, format_guess, redis_cfg):
+def run_analyzer(iri, format_guess):
     """Actually run the analyzer."""
     key = f'data:{iri!s}'
     tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
-    chord(run_one_analyzer.si(token, key, format_guess) for token in tokens)(store_analysis.s(iri, redis_cfg))
+    chord(run_one_analyzer.si(token, key, format_guess) for token in tokens)(store_analysis.s(iri))
 
 
 @celery.task
-def store_analysis(results, iri, redis_cfg):
+def store_analysis(results, iri):
     """Store results of the analysis in redis."""
-    red = redis.StrictRedis().from_url(redis_cfg)
+    red = redis.Redis(connection_pool=redis_pool)
     key_result = f'analyze:{iri!s}'
-    red.set(key_result, json.dumps(results))
-    red.sadd('purgeable', key_result)
-    red.expire(key_result, 30 * 24 * 60 * 60)  # 30D
-    red.expire(f'data:{iri!s}', 0)  # trash original content
+    with red.pipeline() as pipe:
+        pipe.set(key_result, json.dumps(results))
+        pipe.sadd('purgeable', key_result)
+        pipe.expire(key_result, 30 * 24 * 60 * 60)  # 30D
+        pipe.expire(f'data:{iri!s}', 0)  # trash original content
+        pipe.execute()
 
 
 @celery.task
-@environment('REDIS')
-def run_one_analyzer(analyzer_token, key, format_guess, redis_cfg):
+def run_one_analyzer(analyzer_token, key, format_guess):
     """Run one analyzer identified by its token."""
     log = logging.getLogger(__name__)
     analyzer = get_analyzer(analyzer_token)
 
-    red = redis.StrictRedis().from_url(redis_cfg)
     try:
         g = rdflib.ConjunctiveGraph()
         log.debug('Parsing graph')
+        red = redis.Redis(connection_pool=redis_pool)
         g.parse(data=red.get(key), format=format_guess)
         return json.dumps(analyzer.analyze(g))
     except rdflib.plugin.PluginException:
@@ -244,11 +247,10 @@ def get_analyzer(analyzer_token):
 
 
 @celery.task
-@environment('REDIS')
-def process_endpoint(iri, redis_cfg):
+def process_endpoint(iri):
     """Index and analyze triples in the endpoint."""
-    red = redis.StrictRedis().from_url(redis_cfg)
     key = f'endpoints'
+    red = redis.Redis(connection_pool=redis_pool)
     red.sadd('purgeable', key)
     if red.sadd(key, iri) > 0:
         a = SparqlEndpointAnalyzer()
@@ -266,8 +268,7 @@ def process_endpoint(iri, redis_cfg):
 
 
 @celery.task
-@environment('REDIS')
-def analyze_named(endpoint_iri, named_graph, redis_cfg):
+def analyze_named(endpoint_iri, named_graph):
     """Analyze triples in the named graph of the endpoint."""
     key = f'analyze:{endpoint_iri!s}:{named_graph!s}'
     tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
@@ -282,9 +283,10 @@ def run_one_named_analyzer(token, endpoint_iri, named_graph):
 
 
 @celery.task
-@environment('REDIS')
-def store_named_analysis(results, key, redis_cfg):
-    red = redis.StrictRedis().from_url(redis_cfg)
-    red.sadd('purgeable', key)
-    red.set(key, json.dumps(results))
-    red.expire(key, 30 * 24 * 60 * 60)  # 30D
+def store_named_analysis(results, key):
+    red = redis.Redis(connection_pool=redis_pool)
+    with red.pipeline() as pipe:
+        pipe.sadd('purgeable', key)
+        pipe.set(key, json.dumps(results))
+        pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
+        pipe.execute()

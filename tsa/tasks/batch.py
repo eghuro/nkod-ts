@@ -4,20 +4,20 @@ import logging
 import rdflib
 import redis
 import rfc3987
-from atenvironment import environment
 from celery import group
 from rdflib.namespace import RDF
 from rdflib import Namespace
 
 from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer
+from tsa.extensions import redis_pool
 from tsa.tasks.analyze import analyze, process_endpoint
 
 
-def _log_dataset_distribution(g, r, log, access, endpoint):
+def _log_dataset_distribution(g, log, access, endpoint, red):
     dcat = Namespace('http://www.w3.org/ns/dcat#')
     accesses = frozenset(access + endpoint)
-    pipe = r.pipeline()
+    pipe = red.pipeline()
     for ds in g.subjects(RDF.type, dcat.Dataset):
         pipe.sadd('dcatds', str(ds))
         key = f'dsdistr:{ds!s}'
@@ -31,17 +31,15 @@ def _log_dataset_distribution(g, r, log, access, endpoint):
 
 
 @celery.task
-@environment('REDIS')
-def inspect_catalog(key, redis_cfg):
+def inspect_catalog(key):
     """Analyze DCAT datasets listed in the catalog."""
     log = logging.getLogger(__name__)
-    r = redis.StrictRedis.from_url(redis_cfg)
-    # key = f'data:{iri!s}'
+    red = redis.Redis(connection_pool=redis_pool)
 
     log.debug('Parsing graph')
     try:
         g = rdflib.ConjunctiveGraph()
-        g.parse(data=r.get(key), format='turtle')
+        g.parse(data=red.get(key), format='turtle')
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return 0
@@ -67,7 +65,7 @@ def inspect_catalog(key, redis_cfg):
             else:
                 log.warn(f'{endpoint!s} is not a valid endpoint URL')
 
-    _log_dataset_distribution(g, r, log, distributions, endpoints)
+    _log_dataset_distribution(g, log, distributions, endpoints, red)
 
     tasks = [analyze.si(a) for a in distributions]
     tasks.extend(process_endpoint.si(e) for e in endpoints)

@@ -2,14 +2,13 @@
 import logging
 
 import redis
-from atenvironment import environment
 
 from tsa.celery import celery
+from tsa.extensions import redis_pool
 
 
 @celery.task
-@environment('REDIS')
-def system_check(redis_url):
+def system_check():
     """Runs an availability test of additional systems.
 
     Tested are: redis.
@@ -18,8 +17,8 @@ def system_check(redis_url):
     log.info('System check started')
 
     log.info(f'Testing redis, URL: {redis_url}')
-    r = redis.StrictRedis().from_url(redis_url)
-    r.ping()
+    red = redis.Redis(connection_pool=redis_pool)
+    red.ping()
     log.info('System check successful')
 
 

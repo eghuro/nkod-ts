@@ -3,12 +3,12 @@ import logging
 
 import redis
 import rfc3987
-from atenvironment import environment
 from rdflib import Graph
 from rdflib.plugins.sparql.results.jsonresults import JSONResult
 from SPARQLWrapper import JSON, N3, POSTDIRECTLY, SPARQLWrapper
 from SPARQLWrapper.SPARQLExceptions import EndPointInternalError
 
+from tsa.extensions import redis_pool
 from tsa.robots import robots_cache, user_agent
 
 
@@ -118,8 +118,7 @@ class SparqlEndpointAnalyzer(object):
             logging.getLogger(__name__).warn('No named graph when constructing catalog from {endpoint!s}')
             return f'{str1} <{endpoint}>. {str2} {str3}'
 
-    @environment('REDIS')
-    def peek_endpoint(self, endpoint, redis_url):
+    def peek_endpoint(self, endpoint):
         """Extract DCAT datasets from the given endpoint and store them in redis."""
         log = logging.getLogger(__name__)
         if not rfc3987.match(endpoint):
@@ -137,11 +136,13 @@ class SparqlEndpointAnalyzer(object):
             g = Graph()
             g.parse(data=ret, format='n3')
 
-            r = redis.StrictRedis().from_url(redis_url)
+            r = redis.Redis(connection_pool=redis_pool)
             key = f'data:{endpoint!s}:{g!s}'
-            r.set(key, g.serialize(format='turtle'))
-            r.sadd('purgeable', key)
-            r.expire(key, 30 * 24 * 60 * 60)  # 30D
+            with r.pipeline() as pipe:
+                pipe.set(key, g.serialize(format='turtle'))
+                pipe.sadd('purgeable', key)
+                pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
+                pipe.execute()
             yield key
 
     def get_graphs_from_endpoint(self, endpoint):

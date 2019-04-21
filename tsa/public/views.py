@@ -5,12 +5,12 @@ from collections import OrderedDict, defaultdict
 
 import redis
 import rfc3987
-from atenvironment import environment
 from celery import group
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.analyzer import SkosAnalyzer
 from tsa.cache import cached
+from tsa.extensions import redis_pool
 from tsa.monitor import Monitor
 from tsa.tasks.query import index_distribution_query
 
@@ -21,91 +21,87 @@ blueprint = Blueprint('public', __name__, static_folder='../static')
 
 @blueprint.route('/api/v1/analyze', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
-@environment('REDIS')
-def api_analyze_get(redis_url):
+def api_analyze_get():
     """Read the analysis."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
+    red = redis.Redis(connection_pool=redis_pool)
     iri = request.args.get('iri', None)
     if rfc3987.match(iri):
         key = f'analyze:{iri!s}'
-        if not r.exists(key):
+        if not red.exists(key):
             abort(404)
         else:
-            return jsonify(json.loads(r.get(key)))
+            return jsonify(json.loads(red.get(key)))
     else:
         abort(400)
 
 
 @blueprint.route('/api/v1/query/dataset', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
-@environment('REDIS')
-def ds_index(redis_url):
+def ds_index():
     """Query a DCAT dataset."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     iri = request.args.get('iri', None)
     current_app.logger.info(f'Querying distributions from DCAT dataset: {iri}')
     if rfc3987.match(iri):
-        if not r.sismember('dcatds', iri):
+        red = redis.Redis(connection_pool=redis_pool)
+        if not red.sismember('dcatds', iri):
             abort(404)
         else:
-            return batch(r.smembers(f'dsdistr:{iri}'))
+            return batch(red.smembers(f'dsdistr:{iri}'), red)
     else:
         abort(400)
 
 
 @blueprint.route('/api/v1/query/distribution', methods=['GET'])
 @cached(True, must_revalidate=True, client_only=False, client_timeout=900, server_timeout=1800)
-@environment('REDIS')
-def distr_index(redis_url):
+def distr_index():
     """Query an RDF distribution sumbitted for analysis."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     iri = request.args.get('iri', None)
     current_app.logger.info(f'Querying distribution for: {iri}')
     if rfc3987.match(iri):
-        if not r.exists(f'ds:{iri}'):
+        red = redis.Redis(connection_pool=redis_pool)
+        if not red.exists(f'ds:{iri}'):
             abort(404)
         else:
             index_distribution_query.s(iri).apply_async().get()
-            return jsonify(json.loads(r.get(f'distrquery:{iri}')))
+            return jsonify(json.loads(red.get(f'distrquery:{iri}')))
     abort(400)
 
 
-def _graph_iris(r):
-    for e in r.smembers('endpoints'):
-        for g in r.smembers(f'graphs:{e}'):
+def _graph_iris(red):
+    for e in red.smembers('endpoints'):
+        for g in red.smembers(f'graphs:{e}'):
             yield f'{e}/{g}'
 
 
-@environment('REDIS')
-def _get_known_distributions(redis_url):
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    distr_endpoints = r.smembers('distributions').union(frozenset(_graph_iris(r)))
-    failed_skipped = r.smembers('stat:failed').union(r.smembers('stat:skipped'))
+def _get_known_distributions(red):
+    distr_endpoints = red.smembers('distributions').union(frozenset(_graph_iris(red)))
+    failed_skipped = red.smembers('stat:failed').union(red.smembers('stat:skipped'))
     return distr_endpoints.difference(failed_skipped)
 
 
 @blueprint.route('/api/v1/query/analysis', methods=['GET'])
 def known_distributions():
     """List known distributions and endpoints without failed or skipped ones."""
-    return jsonify(list(_get_known_distributions()))
+    red = redis.Redis(connection_pool=redis_pool)
+    return jsonify(list(_get_known_distributions(red)))
 
 
-def skip(iri, r):
+def skip(iri, red):
     """Condition if iri should be skipped from gathering analyses."""
     key = f'analyze:{iri!s}'
-    return r.sismember('stat:failed', iri) or\
-        r.sismember('stat:skipped', iri) or\
+    return red.sismember('stat:failed', iri) or\
+        red.sismember('stat:skipped', iri) or\
         not rfc3987.match(iri) or\
-        not r.exists(key)
+        not red.exists(key)
 
 
-def missing(iri, r):
+def missing(iri, red):
     """Condition if index query result is missing."""
     key = f'distrquery:{iri!s}'
-    return not r.exists(key) and not r.sismember('stat:failed', iri) and not r.sismember('stat:skipped', iri)
+    return not red.exists(key) and not red.sismember('stat:failed', iri) and not red.sismember('stat:skipped', iri)
 
 
-def gather_analyses(iris, transitive, cross, r):
+def gather_analyses(iris, transitive, cross, red):
     """Compile analyses for all iris from all analyzers."""
     current_app.logger.info(f'Gather analyses')
     analyses = []
@@ -116,10 +112,10 @@ def gather_analyses(iris, transitive, cross, r):
     internal = defaultdict(set)
 
     for iri in iris:
-        if skip(iri, r):
+        if skip(iri):
             continue
         key = f'analyze:{iri!s}'
-        x = json.loads(r.get(key))
+        x = json.loads(red.get(key))
         analyses_red = []
         for y in x:
             analyses_red.append(y)
@@ -144,19 +140,19 @@ def gather_analyses(iris, transitive, cross, r):
 
             analyses.append({'iri': iri, 'analysis': analysis})
     current_app.logger.info(f'Gathered initial, {len(predicates.keys())}')
-    r.sadd('relationship', 'skosCross', 'skosTransitive')
+    red.sadd('relationship', 'skosCross', 'skosTransitive')
     cnt = 0
     if transitive:
         for iri in iris:
             for common in internal[iri].union(external['iri']):
                 for reltype in SkosAnalyzer.relations:
                     key = f'related:{reltype}:{common}'
-                    for ds in r.smembers(key):
-                        log_related('skosTransitive', common, iri, ds, r)
+                    for ds in red.smembers(key):
+                        log_related('skosTransitive', common, iri, ds)
                         cnt = cnt + 6
                 key = f'related:sameAs:{common}'
-                for ds in r.smembers(key):
-                    log_related('sameAsTransitive', common, iri, ds, r)
+                for ds in red.smembers(key):
+                    log_related('sameAsTransitive', common, iri, ds)
                     cnt = cnt + 6
         current_app.logger.info(f'Calculated transitive')
 
@@ -164,7 +160,7 @@ def gather_analyses(iris, transitive, cross, r):
         for iri_in in iris:
             for iri_out in iris:
                 for common in external[iri_out].intersection(internal[iri_in]):
-                    log_related('cross', common, iri_in, iri_out, r)
+                    log_related('cross', common, iri_in, iri_out)
                     cnt = cnt + 6
     current_app.logger.info(f'Indexed {cnt!s} records')
 
@@ -174,9 +170,9 @@ def gather_analyses(iris, transitive, cross, r):
     return analyses
 
 
-def log_related(rel_type, common, iri_in, iri_out, r):
+def log_related(rel_type, common, iri_in, iri_out, red):
     exp = 30 * 24 * 60 * 60  # 30D
-    pipe = r.pipeline()
+    pipe = red.pipeline()
     pipe.sadd(f'related:{rel_type}:{common!s}', iri_in)
     pipe.sadd(f'related:{rel_type}:{common!s}', iri_out)
     pipe.sadd(f'key:{iri_in!s}', common)
@@ -197,11 +193,11 @@ def log_related(rel_type, common, iri_in, iri_out, r):
     pipe.execute()
 
 
-def fetch_missing(iris, r):
+def fetch_missing(iris, red):
     """Trigger index distribution query where needed."""
     missing_query = []
     for iri in iris:
-        if missing(iri, r):
+        if missing(iri, red):
             current_app.logger.debug(f'Missing index query result for {iri!s}')
             missing_query.append(iri)
 
@@ -212,15 +208,15 @@ def fetch_missing(iris, r):
     current_app.logger.info('Leaving')
 
 
-def gather_queries(iris, r):
+def gather_queries(iris, red):
     """Compile queries for all iris."""
     current_app.logger.info('Appending results')
     for iri in iris:
         key = f'distrquery:{iri!s}'
-        if missing(iri, r):
+        if missing(iri):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
         else:
-            related = r.get(key)
+            related = red.get(key)
 
             if related is not None:
                 rel_json = json.loads(related)
@@ -234,37 +230,36 @@ def gather_queries(iris, r):
 
 
 @blueprint.route('/api/v1/query/analysis', methods=['POST'])
-@environment('REDIS')
-def batch_analysis(redis_url):
+def batch_analysis():
     """
     Get a big report for all required distributions.
 
     Get a list of distributions in request body as JSON, compile analyses,
     query the index return the compiled report.
     """
+    red = redis.Redis(connection_pool=redis_pool)
     lst = request.get_json()
     if lst is None:
         lst = _get_known_distributions()
 
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
     small = 'small' in request.args
     pretty = 'pretty' in request.args
     transitive = 'noTransitive' not in request.args
     cross = 'noCross' not in request.args
-    return batch(lst, r, transitive, cross, small, pretty, True)
+    return batch(lst, red, transitive, cross, small, pretty, True)
 
 
-def batch(lst, r, transitive=False, cross=False, small=False, pretty=False, stats=False):
-    analyses = gather_analyses(lst, transitive, cross, r)
+def batch(lst, red, transitive=False, cross=False, small=False, pretty=False, stats=False):
+    analyses = gather_analyses(lst, transitive, cross, red)
     if small:
         current_app.logger.info('Small')
         analyses = analyses[-2:]
-    fetch_missing(lst, r)
-    analyses.extend(x for x in gather_queries(lst, r))
+    fetch_missing(lst, red)
+    analyses.extend(x for x in gather_queries(lst, red))
     if stats:
         analyses.append({
-            'format': list(r.hgetall('stat:format')),
-            'size': retrieve_size_stats(r)
+            'format': list(red.hgetall('stat:format')),
+            'size': retrieve_size_stats(red)
         })
     if pretty:
         return json.dumps(analyses, indent=4, sort_keys=True)
@@ -272,20 +267,19 @@ def batch(lst, r, transitive=False, cross=False, small=False, pretty=False, stat
 
 
 @blueprint.route('/api/v1/cleanup', methods=['POST', 'DELETE'])
-@environment('REDIS')
-def cleanup(redis_url):
+def cleanup():
     extra = ['purgeable']
     stats = 'stats' in request.args
     if stats:
         extra.extend(Monitor.KEYS)
 
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    cache_items = [key for key in r.keys() if key.startswith(current_app.config['CACHE_KEY_PREFIX'])]
-    current_app.logger.debug('Flask cache items: ' + str(cache_items))
-    extra.extend(cache_items)
+    red = redis.Redis(connection_pool=redis_pool)
+    with red.pipeline() as pipe:
+        cache_items = [key for key in red.keys() if key.startswith(current_app.config['CACHE_KEY_PREFIX'])]
+        current_app.logger.debug('Flask cache items: ' + str(cache_items))
+        extra.extend(cache_items)
 
-    with r.pipeline() as pipe:
-        for key in [key for key in r.smembers('purgeable')] + extra:
+        for key in [key for key in pipe.smembers('purgeable')] + extra:
             pipe.delete(key)
         pipe.execute()
     return 'OK'

@@ -1,35 +1,32 @@
 """Stat endpoints."""
 import math
-import redis
 import statistics
-from atenvironment import environment
+import redis
 from flask import Blueprint, current_app, jsonify
+from tsa.extensions import redis_pool
 
 blueprint = Blueprint('stat', __name__, static_folder='../static')
 
 
 @blueprint.route('/api/v1/stat/format', methods=['GET'])
-@environment('REDIS')
-def stat_format(redis_url):
+def stat_format():
     """List distribution formats logged."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(r.hgetall('stat:format'))
+    red = redis.Redis(connection_pool=redis_pool)
+    return jsonify(red.hgetall('stat:format'))
 
 
 @blueprint.route('/api/v1/stat/failed', methods=['GET'])
-@environment('REDIS')
-def stat_failed(redis_url):
+def stat_failed():
     """List failed distributions."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(list(r.smembers('stat:failed')))
+    red = redis.Redis(connection_pool=redis_pool)
+    return jsonify(list(red.smembers('stat:failed')))
 
 
 @blueprint.route('/api/v1/stat/size', methods=['GET'])
-@environment('REDIS')
-def stat_size(redis_url):
+def stat_size():
     """List min, max and average distribution size."""
-    r = redis.StrictRedis.from_url(redis_url, charset='utf-8', decode_responses=True)
-    return jsonify(retrieve_size_stats(r))
+    red = redis.Redis(connection_pool=redis_pool)
+    return jsonify(retrieve_size_stats(red))
 
 
 def convert_size(size_bytes):
@@ -42,9 +39,9 @@ def convert_size(size_bytes):
    return "%s %s" % (s, size_name[i])
 
 
-def retrieve_size_stats(r):
+def retrieve_size_stats(red):
     """Load sizes from redis and calculate some stats about it."""
-    lst = sorted([int(x) for x in r.lrange('stat:size', 0, -1)])
+    lst = sorted([int(x) for x in red.lrange('stat:size', 0, -1)])
     try:
         mode = statistics.mode(lst)
     except statistics.StatisticsError:

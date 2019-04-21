@@ -1,18 +1,17 @@
 """Recording various runtime metrics into redis."""
 import redis
-from atenvironment import environment
 
+from tsa.extensions import redis_pool
 
 class Monitor(object):
     """Monitor is recording various runtime metrics into redis."""
 
     KEYS = ['stat:size', 'stat:format']
 
-    @environment('REDIS')
-    def __init__(self, redis_url):
+    def __init__(self):
         """Try to connect to redis and reset counters."""
         try:
-            self.__client = redis.StrictRedis().from_url(redis_url)
+            self.__client = redis.Redis(connection_pool=redis_pool)
         except redis.exceptions.ConnectionError:
             self.__client = None
 
