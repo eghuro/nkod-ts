@@ -112,7 +112,7 @@ def gather_analyses(iris, transitive, cross, red):
     internal = defaultdict(set)
 
     for iri in iris:
-        if skip(iri):
+        if skip(iri, red):
             continue
         key = f'analyze:{iri!s}'
         x = json.loads(red.get(key))
@@ -123,7 +123,6 @@ def gather_analyses(iris, transitive, cross, red):
             analysis = json.loads(analysis)
             if analysis is None:
                 continue
-            current_app.logger.info(f'{analysis!s}')
             if 'predicates' in analysis:
                 for p in analysis['predicates']:
                     predicates[p] += int(analysis['predicates'][p])
@@ -148,11 +147,11 @@ def gather_analyses(iris, transitive, cross, red):
                 for reltype in SkosAnalyzer.relations:
                     key = f'related:{reltype}:{common}'
                     for ds in red.smembers(key):
-                        log_related('skosTransitive', common, iri, ds)
+                        log_related('skosTransitive', common, iri, ds, red)
                         cnt = cnt + 6
                 key = f'related:sameAs:{common}'
                 for ds in red.smembers(key):
-                    log_related('sameAsTransitive', common, iri, ds)
+                    log_related('sameAsTransitive', common, iri, ds, red)
                     cnt = cnt + 6
         current_app.logger.info(f'Calculated transitive')
 
@@ -201,19 +200,15 @@ def fetch_missing(iris, red):
             current_app.logger.debug(f'Missing index query result for {iri!s}')
             missing_query.append(iri)
 
-    current_app.logger.info('Fetching missing query results')
     t = group(index_distribution_query.si(iri) for iri in missing_query).apply_async()
-    current_app.logger.info('Call get')
     t.get()
-    current_app.logger.info('Leaving')
 
 
 def gather_queries(iris, red):
     """Compile queries for all iris."""
-    current_app.logger.info('Appending results')
     for iri in iris:
         key = f'distrquery:{iri!s}'
-        if missing(iri):
+        if missing(iri, red):
             current_app.logger.warn(f'Missing index query result for {iri!s}')
         else:
             related = red.get(key)
@@ -240,7 +235,7 @@ def batch_analysis():
     red = redis.Redis(connection_pool=redis_pool)
     lst = request.get_json()
     if lst is None:
-        lst = _get_known_distributions()
+        lst = _get_known_distributions(red)
 
     small = 'small' in request.args
     pretty = 'pretty' in request.args

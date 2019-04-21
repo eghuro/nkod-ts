@@ -66,6 +66,7 @@ def api_analyze_catalog():
                 pipe.expire(key, exp)
                 pipe.sadd('purgeable', key)
                 pipe.execute()
+            req.close()
             inspect_catalog.si(key).apply_async()
             return 'OK'
         abort(400)
