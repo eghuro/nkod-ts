@@ -7,7 +7,6 @@ from celery import group
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
-from tsa.endpoint import SparqlGraph
 from tsa.extensions import redis_pool
 
 
@@ -21,8 +20,10 @@ def index_named(iri, named):
 @celery.task
 def run_one_named_indexer(token, iri, named):
     """Run indexer on the named graph of the endpoint."""
-    g = SparqlGraph(iri, named)
-    return run_indexer(token, f'{iri}/{named}', g)
+    g = Graph(store='SPARQLStore', identifier=named)
+    g.open(iri)
+    red = redis.Redis(connection_pool=redis_pool)
+    return run_indexer(token, f'{iri}/{named}', g, red)
 
 
 @celery.task

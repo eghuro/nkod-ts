@@ -11,7 +11,7 @@ from reppy.robots import Robots
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.compression import SizeException, decompress_7z
-from tsa.endpoint import SparqlEndpointAnalyzer, SparqlGraph
+from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.extensions import redis_pool
 from tsa.monitor import monitor
 from tsa.robots import robots_cache, user_agent, session
@@ -46,9 +46,8 @@ def analyze(self, iri):
     log.info(f'Analyzing {iri!s}')
 
     if iri.endswith('sparql'):
-        log.info(f'Guessing it is a SPARQL endpoint, currently skipped')
-        return
-        #return process_endpoint.delay(iri)
+        log.info(f'Guessing it is a SPARQL endpoint')
+        return process_endpoint.si(iri).apply_async()
 
     try:
         try:
@@ -103,7 +102,7 @@ def analyze(self, iri):
                 log.error(f'File is too large: {iri}')
             else:
                 pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
-        return pipeline.delay()
+        return pipeline.apply_async()
     except:
         log.exception(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
@@ -253,18 +252,20 @@ def process_endpoint(iri):
     red = redis.Redis(connection_pool=redis_pool)
     red.sadd('purgeable', key)
     if red.sadd(key, iri) > 0:
-        a = SparqlEndpointAnalyzer()
-        tasks = []
-        for g in a.get_graphs_from_endpoint(iri):
-            key = f'graphs:{iri}'
-            red.sadd('purgeable', key)
-            if red.sadd(key, g) > 0:
-                tasks.append(index_named.si(iri, g))
-                tasks.append(analyze_named.si(iri, g))
-        red.expire(key, 30 * 24 * 60 * 60)  # 30D
-        return group(tasks).apply_async()
-    log = logging.getLogger(__name__)
-    log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
+        pass
+
+    a = SparqlEndpointAnalyzer()
+    tasks = []
+    for g in a.get_graphs_from_endpoint(iri):
+        key = f'graphs:{iri}'
+        red.sadd('purgeable', key)
+        if red.sadd(key, g) > 0:
+            tasks.append(index_named.si(iri, g))
+            tasks.append(analyze_named.si(iri, g))
+    red.expire(key, 30 * 24 * 60 * 60)  # 30D
+    return group(tasks).apply_async()
+    #log = logging.getLogger(__name__)
+    #log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
 @celery.task
@@ -277,7 +278,8 @@ def analyze_named(endpoint_iri, named_graph):
 
 @celery.task
 def run_one_named_analyzer(token, endpoint_iri, named_graph):
-    g = SparqlGraph(endpoint_iri, named_graph)
+    g = rdflib.Graph(store='SPARQLStore', identifier=named_graph)
+    g.open(endpoint_iri)
     a = get_analyzer(token)
     return json.dumps(a.analyze(g))
 

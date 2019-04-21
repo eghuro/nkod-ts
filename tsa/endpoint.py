@@ -4,37 +4,9 @@ import logging
 import redis
 import rfc3987
 from rdflib import Graph
-from rdflib.plugins.sparql.results.jsonresults import JSONResult
-from SPARQLWrapper import JSON, N3, POSTDIRECTLY, SPARQLWrapper
-from SPARQLWrapper.SPARQLExceptions import EndPointInternalError
 
 from tsa.extensions import redis_pool
 from tsa.robots import robots_cache, user_agent
-
-
-class SparqlGraph(object):
-    """Wrapper around SPARQL endpoint providing rdflib.Graph-like querying API."""
-
-    def __init__(self, endpoint, named=None):
-        """Connect to the endpoint."""
-        if not robots_cache.allowed(endpoint):
-            log = logging.getLogger(__name__)
-            log.warn(f'Not allowed to query {endpoint!s} as {user_agent!s} by robots.txt')
-
-        self.__sparql = SPARQLWrapper(endpoint, agent=user_agent)
-
-    def query(self, query_str):
-        """Query the endpoint and parse the result graph."""
-        self.__sparql.setQuery(query_str)
-        try:
-            self.__sparql.setReturnFormat(JSON)
-            resg = self.__sparql.queryAndConvert()
-            res = JSONResult(resg)
-        except EndPointInternalError:
-            self.__sparql.returnFormat = 'application/sparql-results+json'
-            resg = self.__sparql.queryAndConvert()
-            res = JSONResult(resg)
-        return res
 
 
 class SparqlEndpointAnalyzer(object):
@@ -124,17 +96,12 @@ class SparqlEndpointAnalyzer(object):
         if not rfc3987.match(endpoint):
             log.warn(f'{endpoint!s} is not a valid endpoint URL')
             return
-        sparql = SPARQLWrapper(endpoint, returnFormat=N3)
-        sparql.setRequestMethod(POSTDIRECTLY)
-        sparql.setMethod('POST')
-        for g in self.get_graphs_from_endpoint(endpoint):
+        for graph_iri in self.get_graphs_from_endpoint(endpoint):
             if not rfc3987.match(g):
                 log.warn(f'{endpoint!s} is not a valid graph URL')
                 continue
-            sparql.setQuery(self.__query(endpoint, g))
-            ret = sparql.query().convert()
-            g = Graph()
-            g.parse(data=ret, format='n3')
+            g = Graph(store='SPARQLStore', identifier=graph_iri)
+            g.open(endpoint)
 
             r = redis.Redis(connection_pool=redis_pool)
             key = f'data:{endpoint!s}:{g!s}'
@@ -147,16 +114,7 @@ class SparqlEndpointAnalyzer(object):
 
     def get_graphs_from_endpoint(self, endpoint):
         """Extract named graphs from the given endpoint."""
-        sparql = SPARQLWrapper(endpoint, returnFormat=N3)
-        sparql.setRequestMethod(POSTDIRECTLY)
-        sparql.setMethod('POST')
-        sparql.setQuery('select distinct ?g where { GRAPH ?g {?s ?p ?o} }')
-        try:
-            sparql.setReturnFormat(JSON)
-            resg = sparql.queryAndConvert()
-            res = JSONResult(resg)
-        except EndPointInternalError:
-            sparql.returnFormat = 'application/sparql-results+json'
-            resg = sparql.queryAndConvert()
-            res = JSONResult(resg)
-        return [row['g'] for row in res]
+        g = Graph(store='SPARQLStore')
+        g.open(endpoint)
+        for row in g.query('select distinct ?g where { GRAPH ?g {?s ?p ?o} }'):
+            yield row['g']
