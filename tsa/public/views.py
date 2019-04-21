@@ -283,4 +283,9 @@ def cleanup(redis_url):
     cache_items = [key for key in r.keys() if key.startswith(current_app.config['CACHE_KEY_PREFIX'])]
     current_app.logger.debug('Flask cache items: ' + str(cache_items))
     extra.extend(cache_items)
-    r.delete([key for key in r.smembers('purgeable')] + extra)
+
+    with r.pipeline() as pipe:
+        for key in [key for key in r.smembers('purgeable')] + extra:
+            pipe.delete(key)
+        pipe.execute()
+    return 'OK'

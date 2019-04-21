@@ -248,9 +248,9 @@ class GenericAnalyzer(AbstractAnalyzer):
         predicates_count = dict()
         classes_count = dict()
 
-        triples = None
+        triples = 0
         for row in graph.query('select (COUNT(*) as ?c) where { ?s ?p ?o}'):
-            triples = row['c']
+            triples = int(row['c'])
 
         q = 'SELECT ?p (COUNT(?p) AS ?count) WHERE { ?s ?p ?o . } GROUP BY ?p ORDER BY DESC(?count)'
         for row in graph.query(q):
