@@ -2,6 +2,16 @@
 History
 =======
 
+0.4.0 (2019-04-22)
+------------------
+
+* performance tweaks
+* support for 7z compressed distribution files
+* named graph support
+* indexing cross-dataset relations
+* enhanced reporting
+* DCAT dataset query
+
 0.3.0 (2019-04-17)
 ------------------
 
