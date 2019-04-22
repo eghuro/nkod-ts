@@ -20,16 +20,17 @@ script:
   - PYTHON_VERSION=`python --version|head -n1|cut -d' ' -f2|cut -d '+' -f1` docker-compose build
 #before_script:
 #  - flask lint
-deploy:
-  provider: pypi
-  user: $PYPI_USER
-  password: $PYPI_PASSWORD
-  after_deploy:
-   - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-   - docker build -f Dockerfile -t $REPO:$COMMIT .
-   - docker tag $REPO:$COMMIT $REPO:$TAG
-   - docker tag $REPO:$COMMIT $REPO:travis-$TRAVIS_BUILD_NUMBER
-   - docker push USER/REPO
-  on:
-    branch: master
-    tags: true
+
+#deploy:
+#  provider: pypi
+#  user: $PYPI_USER
+#  password: $PYPI_PASSWORD
+#  after_deploy:
+#   - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+#   - docker build -f Dockerfile -t $REPO:$COMMIT .
+#   - docker tag $REPO:$COMMIT $REPO:$TAG
+#   - docker tag $REPO:$COMMIT $REPO:travis-$TRAVIS_BUILD_NUMBER
+#   - docker push USER/REPO
+#  on:
+#    branch: master
+#    tags: true
