@@ -2,22 +2,13 @@
 NKOD TSA
 ===============================
 
-.. image:: https://img.shields.io/github/release-pre/eghuro/nkod-ts.svg
-     :alt: GitHub release
+.. |github| image:: https://img.shields.io/github/release-pre/eghuro/nkod-ts.svg
+.. |travis| image:: https://img.shields.io/travis/com/eghuro/nkod-ts.svg
+.. |renovate| image:: https://badges.renovateapi.com/github/eghuro/nkod-ts
+.. |codeclimate| image:: https://img.shields.io/codeclimate/maintainability/eghuro/nkod-ts.svg
+.. |licence| image:: https://img.shields.io/github/license/eghuro/nkod-ts.svg
 
-.. image:: https://img.shields.io/travis/com/eghuro/nkod-ts.svg
-     :target: https://travis-ci.com/eghuro/nkod-ts
-
-.. image:: https://badges.renovateapi.com/github/eghuro/nkod-ts
-     :alt: Renovate
-
-.. image:: https://img.shields.io/codeclimate/maintainability/eghuro/nkod-ts.svg
-     :alt: Code Climate maintainability
-
-.. image:: https://img.shields.io/github/license/eghuro/nkod-ts.svg
-     :target: https://github.com/eghuro/nkod-ts/blob/master/LICENSE
-     :alt: License
-
+|github|  |travis|  |renovate|  |codeclimate|  |licence|
 
 
 Indexing linked data and relationships between datasets.
