@@ -196,7 +196,7 @@ def gather_analyses(iris, transitive, cross, red):
     cnt = 0
     if transitive:
         for iri in iris:
-            for common in internal[iri].union(external['iri']):
+            for common in internal[iri].union(external[iri]):
                 for reltype in SkosAnalyzer.relations:
                     key = f'related:{reltype}:{common}'
                     for ds in red.smembers(key):
@@ -242,7 +242,7 @@ def log_related(rel_type, common, iri_in, iri_out, red):
             f'key:{iri_out!s}',
             f'reltype:{iri_in!s}',
             f'reltype:{iri_out!s}']
-    pipe.sadd('purgeable', keys)
+    pipe.sadd('purgeable', *keys)
 
     # distribution queries no longer valid
     pipe.expire(f'distrquery:{iri_in!s}', 0)
@@ -318,7 +318,9 @@ def batch_prepare(lst, red, transitive, cross, small, stats):
     if small:
         current_app.logger.info('Small')
         analyses = analyses[-2:]
+    current_app.logger.info('Fetch missing')
     fetch_missing(lst, red)
+    current_app.logger.info('Gather queries')
     analyses.extend(x for x in gather_queries(lst, red))
     if stats:
         current_app.logger.info('Stats')
