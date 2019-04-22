@@ -40,15 +40,68 @@ def api_analyze_get():
 def ds_index():
     """Query a DCAT dataset."""
     iri = request.args.get('iri', None)
-    current_app.logger.info(f'Querying distributions from DCAT dataset: {iri}')
-    if rfc3987.match(iri):
-        red = redis.Redis(connection_pool=redis_pool)
-        if not red.sismember('dcatds', iri):
-            abort(404)
+    red = redis.Redis(connection_pool=redis_pool)
+    if iri is not None:
+        current_app.logger.info(f'Querying distributions from DCAT dataset: {iri}')
+        if rfc3987.match(iri):
+            red = redis.Redis(connection_pool=redis_pool)
+            if not red.sismember('dcatds', iri):
+                abort(404)
+            else:
+                small = 'small' in request.args
+                pretty = 'pretty' in request.args
+                transitive = 'noTransitive' not in request.args
+                cross = 'noCross' not in request.args
+                iris = red.smembers(f'dsdistr:{iri}')
+                analyses = batch_prepare(iris, red, transitive, cross, small, False)
+
+                # Remove distributions from the same dataset
+                for record in analyses:
+                    if 'iri' in record.keys():
+                        related_keys = record['related'].keys()
+                        for key in related_keys:
+                            new_related = set(record['related'][key]).difference(iris)
+                            record['related'][key] = list(new_related)
+
+                distr_to_ds = defaultdict(None)
+                for ds in red.smembers('dcatds'):
+                    for distr in red.smembers(f'dsdistr:{ds}'):
+                        distr_to_ds[distr] = ds
+                current_app.logger.info(json.dumps(distr_to_ds, indent=4, sort_keys=True))
+
+                # Convert distributions to datasets
+                new_analyses = []
+                for record in analyses:
+                    if 'iri' in record.keys():
+                        related_keys = record['related'].keys()
+                        for key in related_keys:
+                            new_related = set()
+                            for x in record['related'][key]:
+                                if x in distr_to_ds.keys():
+                                    new_related.insert(distr_to_ds[x])
+                            record['related'][key] = list(new_related.difference(set(iri)))
+                    else:
+                        new_analyses.append(record)
+
+                # Merge dicts into one
+                related = defaultdict(set)
+                for record in analyses:
+                    if 'iri' in record.keys():
+                        for key in record['related'].keys():
+                            related[key].update(record['related'][key])
+                keys = related.keys()
+                for key in keys:
+                    related[key] = list(related[key])
+                new_analyses.append(related)
+
+                if pretty:
+                    current_app.logger.info('Pretty')
+                    return json.dumps(new_analyses, indent=4, sort_keys=True)
+                return jsonify(new_analyses)
         else:
-            return batch(red.smembers(f'dsdistr:{iri}'), red)
+            abort(400)
     else:
-        abort(400)
+        return jsonify(list(red.smembers('dcatds')))
 
 
 @blueprint.route('/api/v1/query/distribution', methods=['GET'])
@@ -245,6 +298,14 @@ def batch_analysis():
 
 
 def batch(lst, red, transitive=False, cross=False, small=False, pretty=False, stats=False):
+    analyses = batch_prepare(lst, red, transitive, cross, small, stats)
+    if pretty:
+        current_app.logger.info('Pretty')
+        return json.dumps(analyses, indent=4, sort_keys=True)
+    return jsonify(analyses)
+
+
+def batch_prepare(lst, red, transitive, cross, small, stats):
     analyses = gather_analyses(lst, transitive, cross, red)
     if small:
         current_app.logger.info('Small')
@@ -252,13 +313,12 @@ def batch(lst, red, transitive=False, cross=False, small=False, pretty=False, st
     fetch_missing(lst, red)
     analyses.extend(x for x in gather_queries(lst, red))
     if stats:
+        current_app.logger.info('Stats')
         analyses.append({
             'format': list(red.hgetall('stat:format')),
             'size': retrieve_size_stats(red)
         })
-    if pretty:
-        return json.dumps(analyses, indent=4, sort_keys=True)
-    return jsonify(analyses)
+    return analyses
 
 
 @blueprint.route('/api/v1/cleanup', methods=['POST', 'DELETE'])
