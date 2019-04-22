@@ -3,6 +3,7 @@ import redis
 
 from tsa.extensions import redis_pool
 
+
 class Monitor(object):
     """Monitor is recording various runtime metrics into redis."""
 

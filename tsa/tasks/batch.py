@@ -5,8 +5,8 @@ import rdflib
 import redis
 import rfc3987
 from celery import group
-from rdflib.namespace import RDF
 from rdflib import Namespace
+from rdflib.namespace import RDF
 
 from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer

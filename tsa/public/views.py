@@ -223,6 +223,7 @@ def gather_analyses(iris, transitive, cross, red):
 
 
 def log_related(rel_type, common, iri_in, iri_out, red):
+    """Log related distributions."""
     exp = 30 * 24 * 60 * 60  # 30D
     pipe = red.pipeline()
     pipe.sadd(f'related:{rel_type}:{common!s}', iri_in)
@@ -236,7 +237,12 @@ def log_related(rel_type, common, iri_in, iri_out, red):
     pipe.expire(f'key:{iri_out!s}', exp)
     pipe.expire(f'reltype:{iri_in!s}', exp)
     pipe.expire(f'reltype:{iri_out!s}', exp)
-    pipe.sadd('purgeable', f'related:{rel_type}:{common!s}', f'key:{iri_in!s}', f'key:{iri_out!s}', f'reltype:{iri_in!s}', f'reltype:{iri_out!s}')
+    keys = [f'related:{rel_type}:{common!s}',
+            f'key:{iri_in!s}',
+            f'key:{iri_out!s}',
+            f'reltype:{iri_in!s}',
+            f'reltype:{iri_out!s}']
+    pipe.sadd('purgeable', keys)
 
     # distribution queries no longer valid
     pipe.expire(f'distrquery:{iri_in!s}', 0)
@@ -298,6 +304,7 @@ def batch_analysis():
 
 
 def batch(lst, red, transitive=False, cross=False, small=False, pretty=False, stats=False):
+    """Prepare batch and return it as a pretty printed JSON or as JSON response."""
     analyses = batch_prepare(lst, red, transitive, cross, small, stats)
     if pretty:
         current_app.logger.info('Pretty')
@@ -306,6 +313,7 @@ def batch(lst, red, transitive=False, cross=False, small=False, pretty=False, st
 
 
 def batch_prepare(lst, red, transitive, cross, small, stats):
+    """Gather analyses, fetch missing queries, add stats, merge altogether and return."""
     analyses = gather_analyses(lst, transitive, cross, red)
     if small:
         current_app.logger.info('Small')
@@ -323,6 +331,7 @@ def batch_prepare(lst, red, transitive, cross, small, stats):
 
 @blueprint.route('/api/v1/cleanup', methods=['POST', 'DELETE'])
 def cleanup():
+    """Clean any purgeable records, Flask cache and possibly also stats."""
     extra = ['purgeable']
     stats = 'stats' in request.args
     if stats:

@@ -1,14 +1,14 @@
 """Endpoints to start the analysis."""
 import redis
 import rfc3987
-from flask import Blueprint, abort, current_app, request
 from celery import group
+from flask import Blueprint, abort, current_app, request
 
+from tsa.extensions import redis_pool
+from tsa.robots import session
 from tsa.tasks.analyze import analyze, process_endpoint
 from tsa.tasks.batch import inspect_catalog, inspect_endpoint
 from tsa.tasks.query import index_distribution_query
-from tsa.extensions import redis_pool
-from tsa.robots import session
 
 blueprint = Blueprint('analyze', __name__, static_folder='../static')
 

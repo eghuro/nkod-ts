@@ -1,9 +1,10 @@
 """Dataset analyzer."""
 
 import logging
-import rfc3987
 from abc import ABC
 from collections import defaultdict
+
+import rfc3987
 
 
 class AbstractAnalyzer(ABC):

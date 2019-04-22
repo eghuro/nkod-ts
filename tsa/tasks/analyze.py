@@ -2,9 +2,9 @@
 import json
 import logging
 
-import requests
-import redis
 import rdflib
+import redis
+import requests
 from celery import chord, group
 from reppy.robots import Robots
 
@@ -14,7 +14,7 @@ from tsa.compression import SizeException, decompress_7z
 from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.extensions import redis_pool
 from tsa.monitor import monitor
-from tsa.robots import robots_cache, user_agent, session
+from tsa.robots import robots_cache, session, user_agent
 from tsa.tasks.index import index, index_named
 
 
@@ -252,32 +252,32 @@ def process_endpoint(iri):
     red = redis.Redis(connection_pool=redis_pool)
     red.sadd('purgeable', key)
     if red.sadd(key, iri) > 0:
-        pass
-
-    a = SparqlEndpointAnalyzer()
-    tasks = []
-    for g in a.get_graphs_from_endpoint(iri):
-        key = f'graphs:{iri}'
-        red.sadd('purgeable', key)
-        if red.sadd(key, g) > 0:
-            tasks.append(index_named.si(iri, g))
-            tasks.append(analyze_named.si(iri, g))
-    red.expire(key, 30 * 24 * 60 * 60)  # 30D
-    return group(tasks).apply_async()
-    #log = logging.getLogger(__name__)
-    #log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
+        a = SparqlEndpointAnalyzer()
+        tasks = []
+        for g in a.get_graphs_from_endpoint(iri):
+            key = f'graphs:{iri}'
+            red.sadd('purgeable', key)
+            if red.sadd(key, g) > 0:
+                tasks.append(index_named.si(iri, g))
+                tasks.append(analyze_named.si(iri, g))
+        red.expire(key, 30 * 24 * 60 * 60)  # 30D
+        return group(tasks).apply_async()
+    log = logging.getLogger(__name__)
+    log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
 @celery.task
 def analyze_named(endpoint_iri, named_graph):
-    """Analyze triples in the named graph of the endpoint."""
+    """Analyze triples in a named graph of an endpoint."""
     key = f'analyze:{endpoint_iri!s}:{named_graph!s}'
     tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
-    return chord(run_one_named_analyzer.si(token, endpoint_iri, named_graph) for token in tokens)(store_named_analysis.si(key))
+    tasks = [run_one_named_analyzer.si(token, endpoint_iri, named_graph) for token in tokens]
+    return chord(tasks)(store_named_analysis.si(key))
 
 
 @celery.task
 def run_one_named_analyzer(token, endpoint_iri, named_graph):
+    """Run an analyzer identified by its token on a triples in a named graph of an endpoint."""
     g = rdflib.Graph(store='SPARQLStore', identifier=named_graph)
     g.open(endpoint_iri)
     a = get_analyzer(token)
@@ -286,6 +286,7 @@ def run_one_named_analyzer(token, endpoint_iri, named_graph):
 
 @celery.task
 def store_named_analysis(results, key):
+    """Store results of the analysis in redis."""
     red = redis.Redis(connection_pool=redis_pool)
     with red.pipeline() as pipe:
         pipe.sadd('purgeable', key)

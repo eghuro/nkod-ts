@@ -15,7 +15,6 @@ def index_distribution_query(iri):
 
     Final result is stored in redis.
     """
-
     related = defaultdict(set)
     red = redis.Redis(connection_pool=redis_pool)
     for rel_type in red.smembers(f'reltype:{iri}'):

@@ -6,7 +6,6 @@ import rfc3987
 from rdflib import Graph
 
 from tsa.extensions import redis_pool
-from tsa.robots import robots_cache, user_agent
 
 
 class SparqlEndpointAnalyzer(object):
@@ -97,8 +96,8 @@ class SparqlEndpointAnalyzer(object):
             log.warn(f'{endpoint!s} is not a valid endpoint URL')
             return
         for graph_iri in self.get_graphs_from_endpoint(endpoint):
-            if not rfc3987.match(g):
-                log.warn(f'{endpoint!s} is not a valid graph URL')
+            if not rfc3987.match(graph_iri):
+                log.warn(f'{graph_iri!s} is not a valid graph URL')
                 continue
             g = Graph(store='SPARQLStore', identifier=graph_iri)
             g.open(endpoint)

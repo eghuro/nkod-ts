@@ -20,7 +20,7 @@ def index_named(iri, named):
 @celery.task
 def run_one_named_indexer(token, iri, named):
     """Run indexer on the named graph of the endpoint."""
-    g = Graph(store='SPARQLStore', identifier=named)
+    g = rdflib.Graph(store='SPARQLStore', identifier=named)
     g.open(iri)
     red = redis.Redis(connection_pool=redis_pool)
     return run_indexer(token, f'{iri}/{named}', g, red)
