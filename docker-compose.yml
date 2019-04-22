@@ -11,6 +11,7 @@ services:
       - "80:8000"
     depends_on:
       - celery
+      - redis
   redis:
     image: "redis:alpine"
     ports:

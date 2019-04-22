@@ -2,6 +2,24 @@
 NKOD TSA
 ===============================
 
+.. image:: https://img.shields.io/github/release-pre/eghuro/nkod-ts.svg
+     :alt: GitHub release
+
+.. image:: https://img.shields.io/travis/com/eghuro/nkod-ts.svg
+     :target: https://travis-ci.com/eghuro/nkod-ts
+
+.. image:: https://badges.renovateapi.com/github/eghuro/nkod-ts
+     :alt: Renovate
+
+.. image:: https://img.shields.io/codeclimate/maintainability/eghuro/nkod-ts.svg
+     :alt: Code Climate maintainability
+
+.. image:: https://img.shields.io/github/license/eghuro/nkod-ts.svg
+     :target: https://github.com/eghuro/nkod-ts/blob/master/LICENSE
+     :alt: License
+
+
+
 Indexing linked data and relationships between datasets.
 
 Features:
@@ -27,22 +45,17 @@ For the full environment use docker-compose:
 .. code-block:: bash
 
     docker-compose up --build
-    
+
 Build & run manually
 ----------
-CPython 3.6+ is supported
+CPython 3.6+ is supported.
 
-First, set your app's secret key as an environment variable. For example,
-add the following to ``.bashrc`` or ``.bash_profile``.
-
-.. code-block:: bash
-
-    export NKOD_TSA_SECRET='something-really-secret'
+Install redis server first. In following example we will assume it runs on localhost, port 6379 and DB 0 is used.
 
 Run the following commands to bootstrap your environment ::
 
-    git clone https://github.com/eghuro/crawlcheckio
-    cd crawlcheckio
+    git clone https://github.com/eghuro/nkod-ts
+    cd nkod-ts
     pip install -r requirements.txt
     # Start redis server
     # Run concurrently
@@ -64,7 +77,7 @@ To deploy::
     export FLASK_DEBUG=0
     # Start redis server
     # Run concurrently
-    REDIS=redis://redis:6379/0 celery worker -l info -A tsa.celery
+    REDIS=redis://redis:6379/0 celery worker -l info -A tsa.celery --pool gevent --concurrency=500
     REDIS=redis://redis:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
 
 In your production environment, make sure the ``FLASK_DEBUG`` environment
