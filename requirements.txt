@@ -64,5 +64,5 @@ vine==1.3.0
 waitress==1.4.2
 webencodings==0.5.1
 WebOb==1.8.6
-WebTest==2.0.33
+WebTest==2.0.34
 Werkzeug==0.16.0
