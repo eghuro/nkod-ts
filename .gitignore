@@ -45,6 +45,9 @@ docs/_build
 # Virtualenvs
 env/
 venv/
+venv-idea/
+.idea/
+.pytest_cache/
 
 # npm
 /node_modules/
@@ -52,3 +55,5 @@ venv/
 # webpack-built files
 /tsa/static/build/
 /tsa/webpack/manifest.json
+
+.DS_Store
