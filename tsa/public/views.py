@@ -13,7 +13,6 @@ from tsa.cache import cached
 from tsa.extensions import redis_pool
 from tsa.monitor import Monitor
 from tsa.tasks.query import index_distribution_query
-
 from .stat import retrieve_size_stats
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
@@ -57,7 +56,7 @@ def ds_index():
 
                 # Remove distributions from the same dataset
                 for record in analyses:
-                    if 'iri' in record.keys():
+                    if 'related' in record.keys():
                         related_keys = record['related'].keys()
                         for key in related_keys:
                             new_related = set(record['related'][key]).difference(iris)
@@ -72,7 +71,7 @@ def ds_index():
                 # Convert distributions to datasets
                 new_analyses = []
                 for record in analyses:
-                    if 'iri' in record.keys():
+                    if 'related' in record.keys():
                         related_keys = record['related'].keys()
                         for key in related_keys:
                             new_related = set()
@@ -86,7 +85,7 @@ def ds_index():
                 # Merge dicts into one
                 related = defaultdict(set)
                 for record in analyses:
-                    if 'iri' in record.keys():
+                    if 'related' in record.keys():
                         for key in record['related'].keys():
                             related[key].update(record['related'][key])
                 keys = related.keys()
