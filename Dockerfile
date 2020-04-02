@@ -1,7 +1,8 @@
 ARG PYTHON_VERSION=3.6
 FROM python:${PYTHON_VERSION}-alpine
 COPY requirements.txt .
-RUN apk --no-cache add g++ gcc musl-dev python3-dev libffi-dev openssl-dev libarchive-dev && pip install -r requirements.txt && apk del gcc g++ musl-dev python3-dev libffi-dev openssl-dev
+RUN apk add libstdc++ libarchive-dev binutils #do not remove, as it's needed on runtime
+RUN apk --no-cache add g++ gcc musl-dev libffi-dev openssl-dev && pip install -r requirements.txt && apk del g++ gcc musl-dev libffi-dev openssl-dev
 
 COPY . .
 
