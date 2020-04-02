@@ -96,20 +96,32 @@ class SparqlEndpointAnalyzer(object):
             log.warn(f'{endpoint!s} is not a valid endpoint URL')
             return
         for graph_iri in self.get_graphs_from_endpoint(endpoint):
-            if not rfc3987.match(graph_iri):
-                log.warn(f'{graph_iri!s} is not a valid graph URL')
-                continue
-            g = Graph(store='SPARQLStore', identifier=graph_iri)
-            g.open(endpoint)
+            ret = self.process_graph(endpoint, graph_iri)
+            if ret is not None:
+                yield ret
 
-            r = redis.Redis(connection_pool=redis_pool)
-            key = f'data:{endpoint!s}:{g!s}'
-            with r.pipeline() as pipe:
-                pipe.set(key, g.serialize(format='turtle'))
-                pipe.sadd('purgeable', key)
-                pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
-                pipe.execute()
-            yield key
+    def process_graph(self, endpoint, graph_iri):
+        """Extract DCAT datasets from the given named graph of an endpoint and store them in redis."""
+        log = logging.getLogger(__name__)
+        if not rfc3987.match(endpoint):
+            log.warn(f'{endpoint!s} is not a valid endpoint URL')
+            return None
+        if not rfc3987.match(graph_iri):
+            log.warn(f'{graph_iri!s} is not a valid graph URL')
+            return None
+
+        g = Graph(store='SPARQLStore', identifier=graph_iri)
+        g.open(endpoint)
+
+        r = redis.Redis(connection_pool=redis_pool)
+        key = f'data:{endpoint!s}:{graph_iri!s}'
+        with r.pipeline() as pipe:
+            pipe.set(key, g.serialize(format='N3'))
+            pipe.sadd('purgeable', key)
+            pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
+            pipe.execute()
+        log.info(key)
+        return key
 
     def get_graphs_from_endpoint(self, endpoint):
         """Extract named graphs from the given endpoint."""

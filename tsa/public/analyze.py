@@ -7,7 +7,7 @@ from flask import Blueprint, abort, current_app, request
 from tsa.extensions import redis_pool
 from tsa.robots import session
 from tsa.tasks.analyze import analyze, process_endpoint
-from tsa.tasks.batch import inspect_catalog, inspect_endpoint
+from tsa.tasks.batch import inspect_catalog, inspect_endpoint, inspect_graph
 from tsa.tasks.query import index_distribution_query
 
 blueprint = Blueprint('analyze', __name__, static_folder='../static')
@@ -72,8 +72,16 @@ def api_analyze_catalog():
         abort(400)
     elif 'sparql' in request.args:
         iri = request.args.get('sparql', None)
+        graph = request.args.get('graph', None)
         current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
-        if rfc3987.match(iri):
+        if graph is not None:
+            if rfc3987.match(graph):
+                current_app.logger.info(f'Analyzing named graph {graph} only')
+                inspect_graph.si(iri, graph).apply_async()
+                return 'OK'
+            else:
+                abort(400)
+        elif rfc3987.match(iri):
             (inspect_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
             return 'OK'
         abort(400)

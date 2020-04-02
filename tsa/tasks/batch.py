@@ -39,7 +39,7 @@ def inspect_catalog(key):
     log.debug('Parsing graph')
     try:
         g = rdflib.ConjunctiveGraph()
-        g.parse(data=red.get(key), format='turtle')
+        g.parse(data=red.get(key), format='N3')
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return 0
@@ -77,3 +77,9 @@ def inspect_endpoint(iri):
     """Extract DCAT datasets from the given endpoint and schedule their analysis."""
     inspector = SparqlEndpointAnalyzer()
     return group(inspect_catalog.si(key) for key in inspector.peek_endpoint(iri)).apply_async()
+
+
+@celery.task
+def inspect_graph(endpoint_iri, graph_iri):
+    inspector = SparqlEndpointAnalyzer()
+    return inspect_catalog.si(inspector.process_graph(endpoint_iri, graph_iri)).apply_async()
