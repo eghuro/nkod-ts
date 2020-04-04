@@ -23,11 +23,78 @@ def _log_dataset_distribution(g, log, access, endpoint, red):
         key = f'dsdistr:{ds!s}'
         pipe.sadd('purgeable', 'dcatds', key)
         for dist in g.objects(ds, dcat.distribution):
-            for accessURL in g.objects(dist, dcat.accessURL):
+            for accessURL in g.objects(dist, dcat.downloadURL):
                 if str(accessURL) in accesses:
                     log.debug('Distribution {accessURL!s} from DCAT dataset {ds!s}')
                     pipe.sadd(key, str(accessURL))
     pipe.execute()
+
+
+def _dcat_extractor(g, red, log):
+    distributions, distributions_priority = [], []
+    endpoints = []
+    dcat = Namespace('http://www.w3.org/ns/dcat#')
+    dcterms = Namespace('http://purl.org/dc/terms/')
+    media_priority = set([
+        'https://www.iana.org/assignments/media-types/application/rdf+xml',
+        'https://www.iana.org/assignments/media-types/application/trig',
+        'https://www.iana.org/assignments/media-types/text/n3',
+        'https://www.iana.org/assignments/media-types/application/ld+json',
+        'https://www.iana.org/assignments/media-types/application/n-triples',
+        'https://www.iana.org/assignments/media-types/application/n-quads',
+        'https://www.iana.org/assignments/media-types/text/turtle'
+    ]) #IANA
+    format_priority = set([
+        'http://publications.europa.eu/resource/authority/file-type/RDF',
+        'http://publications.europa.eu/resource/authority/file-type/RDFA',
+        'http://publications.europa.eu/resource/authority/file-type/RDF_N_QUADS',
+        'http://publications.europa.eu/resource/authority/file-type/RDF_N_TRIPLES',
+        'http://publications.europa.eu/resource/authority/file-type/RDF_TRIG',
+        'http://publications.europa.eu/resource/authority/file-type/RDF_TURTLE',
+        'http://publications.europa.eu/resource/authority/file-type/RDF_XML',
+        'http://publications.europa.eu/resource/authority/file-type/JSON_LD',
+        'http://publications.europa.eu/resource/authority/file-type/N3'
+    ]) #EU
+    queue = distributions
+
+    log.info("Extracting distributions")
+    #DCAT Distribution
+    for d in g.subjects(RDF.type, dcat.Distribution):
+        # put RDF distributions into a priority queue
+        for media in g.objects(d, dcat.mediaType):
+            if str(media) in media_priority:
+                queue = distributions_priority
+
+        for format in g.objects(d, dcterms.format):
+            if str(format) in format_priority:
+                queue = distributions_priority
+
+        # access URL to files
+        for access in g.objects(d, dcat.accessURL):
+            if rfc3987.match(str(access)):
+                queue.append(str(access))
+            else:
+                log.warn(f'{access!s} is not a valid access URL')
+
+    #VOID Dataset implies RDF
+    for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
+        for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
+            if rfc3987.match(str(dump)):
+                distributions_priority.append(str(dump))
+            else:
+                log.warn(f'{dump!s} is not a valid dump URL')
+        for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
+            if rfc3987.match(str(endpoint)):
+                endpoints.append(str(endpoint))
+            else:
+                log.warn(f'{endpoint!s} is not a valid endpoint URL')
+
+    _log_dataset_distribution(g, log, distributions + distributions_priority, endpoints, red)
+
+    tasks = [analyze_priority.si(a) for a in distributions_priority]
+    tasks.extend(process_endpoint.si(e) for e in endpoints)
+    tasks.extend(analyze.si(a) for a in distributions)
+    return group(tasks).apply_async()
 
 
 @celery.task
@@ -39,37 +106,12 @@ def inspect_catalog(key):
     log.debug('Parsing graph')
     try:
         g = rdflib.ConjunctiveGraph()
-        g.parse(data=red.get(key), format='N3')
+        g.parse(data=red.get(key), format='n3')
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
-        return 0
+        return None
 
-    distributions = []
-    endpoints = []
-    dcat = Namespace('http://www.w3.org/ns/dcat#')
-    for d in g.subjects(RDF.type, dcat.Distribution):
-        for access in g.objects(d, dcat.accessURL):
-            if rfc3987.match(str(access)):
-                distributions.append(str(access))
-            else:
-                log.warn(f'{access!s} is not a valid access URL')
-    for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
-        for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
-            if rfc3987.match(str(dump)):
-                distributions.append(str(dump))
-            else:
-                log.warn(f'{dump!s} is not a valid dump URL')
-        for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
-            if rfc3987.match(str(endpoint)):
-                endpoints.append(str(endpoint))
-            else:
-                log.warn(f'{endpoint!s} is not a valid endpoint URL')
-
-    _log_dataset_distribution(g, log, distributions, endpoints, red)
-
-    tasks = [analyze.si(a) for a in distributions]
-    tasks.extend(process_endpoint.si(e) for e in endpoints)
-    return group(tasks).apply_async()
+    return _dcat_extractor(g, red, log)
 
 
 @celery.task
@@ -82,4 +124,6 @@ def inspect_endpoint(iri):
 @celery.task
 def inspect_graph(endpoint_iri, graph_iri):
     inspector = SparqlEndpointAnalyzer()
-    return inspect_catalog.si(inspector.process_graph(endpoint_iri, graph_iri)).apply_async()
+    log = logging.getLogger(__name__)
+    red = redis.Redis(connection_pool=redis_pool)
+    return _dcat_extractor(inspector.process_graph(endpoint_iri, graph_iri, False), red, log)

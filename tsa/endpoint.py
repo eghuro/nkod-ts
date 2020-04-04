@@ -30,7 +30,7 @@ class SparqlEndpointAnalyzer(object):
 
           ?d a <http://www.w3.org/ns/dcat#Distribution>;
           <http://purl.org/dc/terms/title> ?dist_title;
-          <http://www.w3.org/ns/dcat#accessURL> ?accessURL;
+          <http://www.w3.org/ns/dcat#downloadURL> ?downloadURL;
           <http://purl.org/dc/terms/format> ?format.
 
           ?d a <http://www.w3.org/ns/dcat#Distribution>;
@@ -69,7 +69,7 @@ class SparqlEndpointAnalyzer(object):
          OPTIONAL { ?ds <http://www.w3.org/ns/dcat#distribution> ?d.
            ?d a <http://www.w3.org/ns/dcat#Distribution>.
            OPTIONAL { ?d <http://purl.org/dc/terms/title> ?dist_title. }
-           OPTIONAL { ?d <http://www.w3.org/ns/dcat#accessURL> ?accessURL. }
+           OPTIONAL { ?d <http://www.w3.org/ns/dcat#downloadURL> ?downloadURL. }
            OPTIONAL { ?d <http://purl.org/dc/terms/format> ?format. }
          }
 
@@ -100,7 +100,7 @@ class SparqlEndpointAnalyzer(object):
             if ret is not None:
                 yield ret
 
-    def process_graph(self, endpoint, graph_iri):
+    def process_graph(self, endpoint, graph_iri, dump_result_to_redis=True):
         """Extract DCAT datasets from the given named graph of an endpoint and store them in redis."""
         log = logging.getLogger(__name__)
         if not rfc3987.match(endpoint):
@@ -113,15 +113,22 @@ class SparqlEndpointAnalyzer(object):
         g = Graph(store='SPARQLStore', identifier=graph_iri)
         g.open(endpoint)
 
-        r = redis.Redis(connection_pool=redis_pool)
-        key = f'data:{endpoint!s}:{graph_iri!s}'
-        with r.pipeline() as pipe:
-            pipe.set(key, g.serialize(format='N3'))
-            pipe.sadd('purgeable', key)
-            pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
-            pipe.execute()
-        log.info(key)
-        return key
+        result = Graph()
+        for s, p, o in g.query(self.__query(endpoint, graph_iri)):
+            result.add( (s, p, o) )
+
+        if dump_result_to_redis:
+            r = redis.Redis(connection_pool=redis_pool)
+            key = f'data:{endpoint!s}:{graph_iri!s}'
+            with r.pipeline() as pipe:
+                pipe.set(key, result.serialize(format='n3'))
+                pipe.sadd('purgeable', key)
+                pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
+                pipe.execute()
+            log.info(key)
+            return key
+        else:
+            return result
 
     def get_graphs_from_endpoint(self, endpoint):
         """Extract named graphs from the given endpoint."""

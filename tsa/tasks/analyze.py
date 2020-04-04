@@ -30,8 +30,17 @@ class Skip(BaseException):
     """Exception indicating we have to skip this distribution."""
 
 
+# Following 2 tasks are doing the same thing but with different priorities
+# This is to speed up known RDF distributions
 @celery.task(bind=True)
+def analyze_priority(self, iri):
+    do_analyze(iri, self, True)
+
+@celery.task(bind=True, time_limit=60)
 def analyze(self, iri):
+    do_analyze(iri, self)
+
+def do_analyze(iri, task, is_prio=False):
     """Analyze an RDF distribution under given IRI."""
     log = logging.getLogger(__name__)
 
@@ -47,15 +56,15 @@ def analyze(self, iri):
 
     if iri.endswith('sparql'):
         log.info(f'Guessing it is a SPARQL endpoint')
-        return process_endpoint.si(iri).apply_async()
+        return process_endpoint.si(iri).apply_async(queue='high_priority')
 
     try:
         try:
             r = fetch(iri, log, red)
         except RobotsRetry as e:
-            self.retry(countdown=e.delay)
+            task.retry(countdown=e.delay)
         except requests.exceptions.RequestException as e:
-            self.retry(exc=e)
+            task.retry(exc=e)
 
         try:
             test_content_length(iri, r, log)
@@ -63,38 +72,9 @@ def analyze(self, iri):
         except Skip:
             return {}
 
-        if guess in ['application/x-7z-compressed']:
-            def gen_iri_guess(iri, r):
-                for sub_iri in decompress_7z(iri, r, red):
-                    # TODO: asi zbytecne, archiv neoteviram vicekrat
-                    if red.sadd(key, sub_iri) == 0:
-                        log.debug(f'Skipping distribution as it was recently analyzed: {sub_iri!s}')
-                        continue
-                    red.expire(key, 30 * 24 * 60 * 60)
-                    red.sadd('purgeable', key)
-                    # end_todo
-                    guess = rdflib.util.guess_format(sub_iri)
-                    if guess is None:
-                        log.error(f'Unknown format after decompression: {sub_iri}')
-                        red.expire(f'data:{sub_iri}', 1)
-                    else:
-                        yield sub_iri, guess
-
-            def gen_tasks(iri, r):
-                lst = []
-                try:
-                    for x in gen_iri_guess(iri, r):
-                        lst.append(x)
-                except SizeException as e:
-                    log.error(f'One of the files in archive {iri} is too large ({e.name})')
-                    for sub_iri, _ in lst:
-                        log.debug(f'Expire {sub_iri}')
-                        red.expire(f'data:{sub_iri}', 0)
-                else:
-                    for sub_iri, guess in lst:
-                        yield index.si(sub_iri, guess)
-                        yield run_analyzer.si(sub_iri, guess)
-            pipeline = group([t for t in gen_tasks(iri, r)])
+        if guess in ['application/x-7z-compressed', 'application/x-zip-compressed']:
+            #delegate this into low_priority task
+            return decompress.si(iri, is_prio).apply_async(queue='low_priority')
         else:
             try:
                 store_content(iri, r, red)
@@ -102,12 +82,65 @@ def analyze(self, iri):
                 log.error(f'File is too large: {iri}')
             else:
                 pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
+        if is_prio:
+            return pipeline.apply_async(queue='high_priority')
         return pipeline.apply_async()
     except:
         log.exception(f'Failed to get {iri!s}')
         red.sadd('stat:failed', str(iri))
         red.sadd('purgeable', 'stat:failed')
         return {}
+
+
+@celery.task(bind=True)
+def decompress(self, iri, is_prio):
+    #maybe we cannot pass request here, so we have to make a new one
+    log = logging.getLogger(__name__)
+    red = redis.Redis(connection_pool=redis_pool)
+
+    try:
+        r = fetch(iri, log, red)
+    except RobotsRetry as e:
+        self.retry(countdown=e.delay)
+    except requests.exceptions.RequestException as e:
+        self.retry(exc=e)
+
+    def gen_iri_guess(iri, r):
+        for sub_iri in decompress_7z(iri, r, red):
+            # TODO: asi zbytecne, archiv neoteviram vicekrat
+            if red.sadd(key, sub_iri) == 0:
+                log.debug(f'Skipping distribution as it was recently analyzed: {sub_iri!s}')
+                continue
+            red.expire(key, 30 * 24 * 60 * 60)
+            red.sadd('purgeable', key)
+            # end_todo
+            guess = rdflib.util.guess_format(sub_iri)
+            if guess is None:
+                log.warn(f'Unknown format after decompression: {sub_iri}')
+                red.expire(f'data:{sub_iri}', 1)
+            else:
+                yield sub_iri, guess
+
+    def gen_tasks(iri, r):
+        lst = []
+        try:
+            for x in gen_iri_guess(iri, r): #this does the decompression
+                lst.append(x)
+        except SizeException as e:
+            log.warn(f'One of the files in archive {iri} is too large ({e.name})')
+            for sub_iri, _ in lst:
+                log.debug(f'Expire {sub_iri}')
+                red.expire(f'data:{sub_iri}', 0)
+        else:
+            for sub_iri, guess in lst:
+                yield index.si(sub_iri, guess)
+                yield run_analyzer.si(sub_iri, guess)
+
+        g = group([t for t in gen_tasks(iri, r)])
+        if is_prio:
+            return g.apply_async(queue='high_priority')
+        else:
+            return g.apply_async()
 
 
 def test_content_length(iri, r, log):
@@ -132,11 +165,11 @@ def guess_format(iri, r, log, red):
     monitor.log_format(str(guess))
     log.info(f'Guessing format to be {guess!s}')
 
-    if guess not in ['html', 'hturtle', 'mdata', 'microdata', 'n3',
+    if guess not in ['hturtle', 'mdata', 'microdata', 'n3',
                      'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
                      'trix', 'trig', 'turtle', 'xml', 'json-ld',
-                     'application/x-7z-compressed', 'text/html',
-                     'application/rdf+xml']:
+                     'application/x-7z-compressed', 'application/rdf+xml',
+                     'text/xml', 'application/ld+json', 'application/json']:
         log.info(f'Skipping this distribution')
         red.sadd('stat:skipped', str(iri))
         red.sadd('purgeable', 'stat:skipped')
@@ -261,7 +294,7 @@ def process_endpoint(iri):
                 tasks.append(index_named.si(iri, g))
                 tasks.append(analyze_named.si(iri, g))
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
-        return group(tasks).apply_async()
+        return group(tasks).apply_async(queue='high_priority')
     log = logging.getLogger(__name__)
     log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
