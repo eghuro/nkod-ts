@@ -13,6 +13,7 @@ from tsa.cache import cached
 from tsa.extensions import redis_pool
 from tsa.monitor import Monitor
 from tsa.tasks.query import index_distribution_query
+from tsa.tasks.system import cleanup
 from .stat import retrieve_size_stats
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
@@ -331,20 +332,12 @@ def batch_prepare(lst, red, transitive, cross, small, stats):
 
 
 @blueprint.route('/api/v1/cleanup', methods=['POST', 'DELETE'])
-def cleanup():
+def cleanup_endpoint():
     """Clean any purgeable records, Flask cache and possibly also stats."""
     extra = ['purgeable']
     stats = 'stats' in request.args
     if stats:
         extra.extend(Monitor.KEYS)
 
-    red = redis.Redis(connection_pool=redis_pool)
-    with red.pipeline() as pipe:
-        cache_items = [key for key in red.keys() if key.startswith(current_app.config['CACHE_KEY_PREFIX'])]
-        current_app.logger.debug('Flask cache items: ' + str(cache_items))
-        extra.extend(cache_items)
-
-        for key in [key for key in pipe.smembers('purgeable')] + extra:
-            pipe.delete(key)
-        pipe.execute()
+    cleanup.si(current_app.config['CACHE_KEY_PREFIX'], extra).apply_async(queue='low_priority')
     return 'OK'
