@@ -23,10 +23,10 @@ def _log_dataset_distribution(g, log, access, endpoint, red):
         key = f'dsdistr:{ds!s}'
         pipe.sadd('purgeable', 'dcatds', key)
         for dist in g.objects(ds, dcat.distribution):
-            for accessURL in g.objects(dist, dcat.downloadURL):
-                if str(accessURL) in accesses:
-                    log.debug('Distribution {accessURL!s} from DCAT dataset {ds!s}')
-                    pipe.sadd(key, str(accessURL))
+            for downloadURL in g.objects(dist, dcat.downloadURL):
+                if str(downloadURL) in accesses:
+                    log.debug('Distribution {downloadURL!s} from DCAT dataset {ds!s}')
+                    pipe.sadd(key, str(downloadURL))
     pipe.execute()
 
 
@@ -70,7 +70,7 @@ def _dcat_extractor(g, red, log):
                 queue = distributions_priority
 
         # access URL to files
-        for access in g.objects(d, dcat.accessURL):
+        for access in g.objects(d, dcat.downloadURL):
             if rfc3987.match(str(access)):
                 queue.append(str(access))
             else:
