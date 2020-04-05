@@ -21,10 +21,6 @@ task_routes = {
         'queue': 'high_priority'
     },
 
-    'tsa.tasks.analyze.process_endpoint': {
-        'queue': 'high_priority'
-    },
-
     'tsa.tasks.analyze.analyze_named': {
         'queue': 'high_priority'
     },
@@ -60,4 +56,24 @@ task_routes = {
     'tsa.tasks.index.run_one_indexer': {
         'queue': 'high_priority'
     },
+
+    'tsa.tasks.batch.inspect_endpoint': {
+        'queue': 'low_priority'
+    },
+
+    'tsa.tasks.analyze.process_endpoint': {
+        'queue': 'low_priority'
+    },
+
+    'tsa.tasks.analyze.decompress': {
+        'queue': 'low_priority'
+    },
+
+    'tsa.tasks.analyze.decompress_prio': {
+        'queue': 'low_priority'
+    },
+
+    'tsa.tasks.query.*': {
+        'queue': 'query'
+    }
 }

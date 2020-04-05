@@ -7,6 +7,7 @@ import redis
 import requests
 from celery import chord, group
 from reppy.robots import Robots
+from gevent.timeout import Timeout as GeventTimeout
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
@@ -47,7 +48,7 @@ def do_analyze(iri, task, is_prio=False):
     key = f'distributions'
     red = redis.Redis(connection_pool=redis_pool)
     if red.sadd(key, iri) == 0:
-        log.debug(f'Skipping distribution as it was recently analyzed: {iri!s}')
+        log.warn(f'Skipping distribution as it was recently analyzed: {iri!s}')
         return
     red.expire(key, 30 * 24 * 60 * 60)
     red.sadd('purgeable', key)
@@ -56,7 +57,7 @@ def do_analyze(iri, task, is_prio=False):
 
     if iri.endswith('sparql'):
         log.info(f'Guessing it is a SPARQL endpoint')
-        return process_endpoint.si(iri).apply_async(queue='high_priority')
+        return process_endpoint.si(iri).apply_async(queue='low_priority')
 
     try:
         try:
@@ -65,6 +66,8 @@ def do_analyze(iri, task, is_prio=False):
             task.retry(countdown=e.delay)
         except requests.exceptions.RequestException as e:
             task.retry(exc=e)
+        except GeventTimeout as e:  # this is gevent.timeout.Timeout
+            task.retry(exc=e, countdown=e.seconds)
 
         try:
             test_content_length(iri, r, log)
@@ -72,9 +75,14 @@ def do_analyze(iri, task, is_prio=False):
         except Skip:
             return {}
 
+        decompress_task = decompress
+        if is_prio:
+            decompress_task = decompress_prio
         if guess in ['application/x-7z-compressed', 'application/x-zip-compressed']:
             #delegate this into low_priority task
-            return decompress.si(iri, is_prio).apply_async(queue='low_priority')
+            return decompress_task.si(iri, 'zip').apply_async(queue='low_priority')
+        elif guess in ['application/gzip']:
+            return decompress_task.si(iri, 'gzip').apply_async(queue='low_priority')
         else:
             try:
                 store_content(iri, r, red)
@@ -92,8 +100,15 @@ def do_analyze(iri, task, is_prio=False):
         return {}
 
 
+@celery.task(bind=True, time_limit=60)
+def decompress(self, iri, type):
+    do_decompress(self, iri, type)
+
 @celery.task(bind=True)
-def decompress(self, iri, is_prio):
+def decompress_prio(self, iri, type):
+    do_decompress(self, iri, type, True)
+
+def do_decompress(task, iri, type, is_prio=False):
     #maybe we cannot pass request here, so we have to make a new one
     log = logging.getLogger(__name__)
     red = redis.Redis(connection_pool=redis_pool)
@@ -101,12 +116,16 @@ def decompress(self, iri, is_prio):
     try:
         r = fetch(iri, log, red)
     except RobotsRetry as e:
-        self.retry(countdown=e.delay)
+        task.retry(countdown=e.delay)
     except requests.exceptions.RequestException as e:
-        self.retry(exc=e)
+        task.retry(exc=e)
 
     def gen_iri_guess(iri, r):
-        for sub_iri in decompress_7z(iri, r, red):
+        deco = {
+            'zip': decompress_7z,
+            'gzip': decompress_gzip
+        }
+        for sub_iri in deco[type](iri, r, red):
             # TODO: asi zbytecne, archiv neoteviram vicekrat
             if red.sadd(key, sub_iri) == 0:
                 log.debug(f'Skipping distribution as it was recently analyzed: {sub_iri!s}')
@@ -114,7 +133,10 @@ def decompress(self, iri, is_prio):
             red.expire(key, 30 * 24 * 60 * 60)
             red.sadd('purgeable', key)
             # end_todo
-            guess = rdflib.util.guess_format(sub_iri)
+            try:
+                guess = guess_format(sub_iri, r, log, red)
+            except Skip:
+                continue
             if guess is None:
                 log.warn(f'Unknown format after decompression: {sub_iri}')
                 red.expire(f'data:{sub_iri}', 1)
@@ -169,7 +191,8 @@ def guess_format(iri, r, log, red):
                      'nquads', 'nt', 'rdfa', 'rdfa1.0', 'rdfa1.1',
                      'trix', 'trig', 'turtle', 'xml', 'json-ld',
                      'application/x-7z-compressed', 'application/rdf+xml',
-                     'text/xml', 'application/ld+json', 'application/json']:
+                     'text/xml', 'application/ld+json', 'application/json',
+                     'application/gzip', 'application/x-zip-compressed']:
         log.info(f'Skipping this distribution')
         red.sadd('stat:skipped', str(iri))
         red.sadd('purgeable', 'stat:skipped')
@@ -279,7 +302,9 @@ def get_analyzer(analyzer_token):
 
 
 @celery.task
-def process_endpoint(iri):
+def process_endpoint(iri): #Low priority as we are doing scan of all graphs in the endpoint
+    log = logging.getLogger(__name__)
+
     """Index and analyze triples in the endpoint."""
     key = f'endpoints'
     red = redis.Redis(connection_pool=redis_pool)
@@ -294,8 +319,7 @@ def process_endpoint(iri):
                 tasks.append(index_named.si(iri, g))
                 tasks.append(analyze_named.si(iri, g))
         red.expire(key, 30 * 24 * 60 * 60)  # 30D
-        return group(tasks).apply_async(queue='high_priority')
-    log = logging.getLogger(__name__)
+        return group(tasks).apply_async(queue='low_priority')
     log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
