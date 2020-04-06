@@ -5,6 +5,7 @@ from collections import OrderedDict, defaultdict
 
 import redis
 import rfc3987
+import uuid
 from celery import group
 from flask import Blueprint, abort, current_app, jsonify, request
 
@@ -12,9 +13,9 @@ from tsa.analyzer import SkosAnalyzer
 from tsa.cache import cached
 from tsa.extensions import redis_pool
 from tsa.monitor import Monitor
-from tsa.tasks.query import index_distribution_query
+from tsa.tasks.query import index_distribution_query, retrieve_size_stats
+from tsa.tasks.query import *
 from tsa.tasks.system import cleanup
-from .stat import retrieve_size_stats
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -173,6 +174,8 @@ def gather_analyses(iris, transitive, cross, red):
         for y in x:
             analyses_red.append(y)
         for analysis in analyses_red:  # from several analyzers
+            if analysis is None:
+                continue
             analysis = json.loads(analysis)
             if analysis is None:
                 continue
@@ -297,19 +300,51 @@ def batch_analysis():
         lst = _get_known_distributions(red)
 
     small = 'small' in request.args
-    pretty = 'pretty' in request.args
-    transitive = 'noTransitive' not in request.args
+    trans = 'noTransitive' not in request.args
     cross = 'noCross' not in request.args
-    return batch(lst, red, transitive, cross, small, pretty, True)
+    stats = 'stats' in request.args
+    result_id = str(uuid.uuid4())
+    ###
+    red.sadd('relationship', 'skosCross', 'skosTransitive')
+    #iris = list(lst)
+    current_app.logger.info("Stage 1")
+    group([index_distribution_query.si(iri) for iri in all_missing(lst, red)]).apply_async().get()
+    current_app.logger.info("Stage 2")
+    group([gather_initial.si(iri) for iri in all_gather(lst, red)]).apply_async().get()
+    iris = all_process(lst, red)
+    if trans:
+        current_app.logger.info("Stage 2a")
+        group([transitive.si(iri) for iri in iris]).apply_async().get()
+    if cross:
+        current_app.logger.info("Stage 2b")
+        group([log_common.si(iri_in, iri_out) for iri_in, iri_out in itertools.product(iris, iris)]).apply_async().get()
+
+    current_app.logger.info("Stage 3 - final")
+    iris = list(iris)
+    chain([
+        compile_analyses.si(iris),
+        cut_small.s(small),
+        extend_queries.s(iris),
+        add_stats.s(stats),
+        store_analysis.s(result_id)
+    ]).apply_async()
+    ###
+    #analysis_query(list(lst), small, transitive, cross, stats, result_id).apply_async()
+    return result_id
 
 
-def batch(lst, red, transitive=False, cross=False, small=False, pretty=False, stats=False):
-    """Prepare batch and return it as a pretty printed JSON or as JSON response."""
-    analyses = batch_prepare(lst, red, transitive, cross, small, stats)
-    if pretty:
-        current_app.logger.info('Pretty')
-        return json.dumps(analyses, indent=4, sort_keys=True)
-    return jsonify(analyses)
+@blueprint.route('/api/v1/query/analysis/result', methods=['GET'])
+def fetch_analysis():
+    red = redis.Redis(connection_pool=redis_pool)
+    id = request.args.get('id', None)
+    if id is not None:
+        key = f'analysis:{id}'
+        if red.exists(key):
+            return jsonify(json.loads(red.get(key)))
+        else:
+            abort(404)
+    else:
+        abort(400)
 
 
 def batch_prepare(lst, red, transitive, cross, small, stats):
