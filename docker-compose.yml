@@ -10,13 +10,14 @@ services:
     ports:
       - "80:8000"
     depends_on:
-      - celery
+      - celery_high
+      - celery_default
       - redis
   redis:
     image: "redis:alpine"
     ports:
       - "6379:6379"
-  celery:
+  celery_high:
     build:
         context: .
         args:
@@ -26,4 +27,37 @@ services:
     user: nobody
     depends_on:
       - redis
-    command: celery worker -l info -A tsa.celery --pool gevent --concurrency=500
+    command: celery worker -l info -A tsa.celery -Q high_priority -c 10
+  celery_default:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION}
+    environment:
+      - REDIS=redis://redis:6379/0
+    user: nobody
+    depends_on:
+      - redis
+    command: celery worker -l info -A tsa.celery -Q default -c 20
+  celery_low:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION}
+    environment:
+      - REDIS=redis://redis:6379/0
+    user: nobody
+    depends_on:
+      - redis
+    command: celery worker -l info -A tsa.celery -Q low_priority -c 5
+  celery_query:
+    build:
+      context: .
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION}
+    environment:
+      - REDIS=redis://redis:6379/0
+    user: nobody
+    depends_on:
+      - redis
+    command: celery worker -l info -A tsa.celery --pool gevent --concurrency=500 -Q query
