@@ -78,10 +78,10 @@ def do_analyze(iri, task, is_prio=False):
         decompress_task = decompress
         if is_prio:
             decompress_task = decompress_prio
-        if guess in ['application/x-7z-compressed', 'application/x-zip-compressed']:
+        if guess in ['application/x-7z-compressed', 'application/x-zip-compressed', 'application/zip']:
             #delegate this into low_priority task
             return decompress_task.si(iri, 'zip').apply_async(queue='low_priority')
-        elif guess in ['application/gzip']:
+        elif guess in ['application/gzip', 'application/x-gzip']:
             return decompress_task.si(iri, 'gzip').apply_async(queue='low_priority')
         else:
             try:
@@ -192,7 +192,9 @@ def guess_format(iri, r, log, red):
                      'trix', 'trig', 'turtle', 'xml', 'json-ld',
                      'application/x-7z-compressed', 'application/rdf+xml',
                      'text/xml', 'application/ld+json', 'application/json',
-                     'application/gzip', 'application/x-zip-compressed']:
+                     'application/gzip', 'application/x-zip-compressed',
+                     'application/zip', 'application/rss+xml', 'text/plain',
+                     'application/x-gzip']:
         log.info(f'Skipping this distribution')
         red.sadd('stat:skipped', str(iri))
         red.sadd('purgeable', 'stat:skipped')
