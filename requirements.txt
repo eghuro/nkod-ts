@@ -9,7 +9,7 @@ blinker==1.4
 bumpversion==0.5.3
 cachetools==4.0.0
 celery==4.4.2
-certifi==2019.11.28
+certifi==2020.4.5.1
 chardet==3.0.4
 click==7.1.1
 entrypoints==0.3
