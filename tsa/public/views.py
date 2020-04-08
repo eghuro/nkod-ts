@@ -44,16 +44,16 @@ def ds_index():
     red = redis.Redis(connection_pool=redis_pool)
     if iri is not None:
         current_app.logger.info(f'Querying distributions from DCAT dataset: {iri}')
-        if rfc3987.match(iri):
+        if rfc3987.match(iri):#####
             red = redis.Redis(connection_pool=redis_pool)
-            if not red.sismember('dcatds', iri):
+            if not red.sismember('dcatds', iri):#####
                 abort(404)
             else:
                 small = 'small' in request.args
                 pretty = 'pretty' in request.args
                 transitive = 'noTransitive' not in request.args
                 cross = 'noCross' not in request.args
-                iris = red.smembers(f'dsdistr:{iri}')
+                iris = red.smembers(f'dsdistr:{iri}') #####
                 analyses = batch_prepare(iris, red, transitive, cross, small, False)
 
                 # Remove distributions from the same dataset
@@ -308,16 +308,16 @@ def batch_analysis():
     red.sadd('relationship', 'skosCross', 'skosTransitive')
     #iris = list(lst)
     current_app.logger.info("Stage 1")
-    group([index_distribution_query.si(iri) for iri in all_missing(lst, red)]).apply_async().get()
+    index_distribution_query.chunks(all_missing(lst, red), 8).apply_async().get()
     current_app.logger.info("Stage 2")
-    group([gather_initial.si(iri) for iri in all_gather(lst, red)]).apply_async().get()
+    gather_initial.chunks(all_gather(lst, red), 8).apply_async().get()
     iris = all_process(lst, red)
     if trans:
         current_app.logger.info("Stage 2a")
-        group([transitive.si(iri) for iri in iris]).apply_async().get()
+        transitive.chunks(iris, 8).apply_async().get()
     if cross:
         current_app.logger.info("Stage 2b")
-        group([log_common.si(iri_in, iri_out) for iri_in, iri_out in itertools.product(iris, iris)]).apply_async().get()
+        log_common.chunks(itertools.product(iris, repeat=2), 8).apply_async().get()
 
     current_app.logger.info("Stage 3 - final")
     iris = list(iris)

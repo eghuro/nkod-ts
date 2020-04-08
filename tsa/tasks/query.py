@@ -59,7 +59,7 @@ from tsa.analyzer import SkosAnalyzer
 #     return wf
 
 
-@celery.task
+@celery.task(ignore_result=True)
 def store_analysis(analyses, id):
     red = redis.Redis(connection_pool=redis_pool)
     log = logging.getLogger(__name__)
@@ -113,9 +113,10 @@ def compile_analyses(iris):
     return analyzes
 
 
-@celery.task
+@celery.task(ignore_result=True)
 def gather_initial(iri):
     red = redis.Redis(connection_pool=redis_pool)
+    log = logging.getLogger(__name__)
     with red.pipeline() as pipe:
         if skip(iri, red):
             return
@@ -131,9 +132,11 @@ def gather_initial(iri):
                 continue
 
             if 'predicates' in analysis:
+                log.info(f'Predicates: {analysis["predicates"]!s}')
                 for p in analysis['predicates']:
                     pipe.hincrby('predicates', p, int(analysis['predicates'][p]))
             if 'classes' in analysis:
+                log.info(f'Classes: {analysis["classes"]!s}')
                 for c in analysis['classes']:
                     pipe.hincrby('classes', c, int(analysis['classes'][c]))
             if 'external' in analysis:
@@ -163,7 +166,7 @@ def gather_initial(iri):
     #log.info(f'Gathered initial, {len(predicates.keys())}')
 
 
-@celery.task
+@celery.task(ignore_result=True)
 def transitive(iri):
     red = redis.Redis(connection_pool=redis_pool)
     key_internal = f'internal:{iri}'
@@ -173,21 +176,19 @@ def transitive(iri):
             key = f'related:{reltype}:{common}'
             for ds in red.smembers(key):
                 log_related('skosTransitive', common, iri, ds, red)
-                #cnt = cnt + 6
         key = f'related:sameAs:{common}'
         for ds in red.smembers(key):
             log_related('sameAsTransitive', common, iri, ds, red)
-            #cnt = cnt + 6
 
 
-@celery.task
+@celery.task(ignore_result=True)
 def log_common(iri_in, iri_out):
     red = redis.Redis(connection_pool=redis_pool)
-    for common in red.sinter(f'external{iri_out}', f'internal{iri_in}'):
+    for common in red.sinter(f'external:{iri_out}', f'internal:{iri_in}'):
         log_related('cross', common, iri_in, iri_out, red)
 
 
-@celery.task
+@celery.task(ignore_result=True)
 def index_distribution_query(iri):
     """Query the index and construct related datasets for the iri of a distribution.
 
