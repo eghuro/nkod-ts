@@ -79,28 +79,27 @@ class CubeAnalyzer(AbstractAnalyzer):
     def analyze(self, graph):
         """Analysis of a datacube."""
         datasets = defaultdict(QbDataset)
-        prefix = 'http://purl.org/linked-data/cube#'
-        for row in graph.query(f'SELECT DISTINCT ?ds WHERE {{?ds a <{prefix}DataSet>}}'):
-            dataset = row['ds']
-            qa = f'SELECT DISTINCT ?structure WHERE {{ <{dataset}> <{prefix}structure> ?structure }}'
-            for row in graph.query(qa):
-                structure = row['structure']
-                qb = f'SELECT DISTINCT ?component WHERE {{ <{structure}> <{prefix}component> ?component }}'
-                for row in graph.query(qb):
-                    component = row['component']
-
-                    qc = f'SELECT DISTINCT ?dimension WHERE {{ <{component}> <{prefix}dimension> ?dimension }}'
-                    for row in graph.query(qc):
-                        dimension = row['dimension']
-                        datasets[str(dataset)].dimensions.add(str(dimension))
-                    qd = f'SELECT DISTINCT ?measure WHERE {{ <{component}> <{prefix}measure> ?measure }}'
-                    for row in graph.query(qd):
-                        measure = row['measure']
-                        datasets[str(dataset)].measures.add(str(measure))
+        q = '''
+        PREFIX qb: <http://purl.org/linked-data/cube#>
+        SELECT DISTINCT ?ds ?dimension ?measure WHERE {
+        ?ds a qb:DataSet; qb:structure/qb:component ?component.
+        { ?component qb:dimension ?dimension. } UNION { ?component qb:measure ?measure. }
+        }
+        '''
+        for row in graph.query(q):
+            dataset = str(row['ds'])
+            dimension = str(row['dimension'])
+            measure = str(row['measure'])
+            datasets[dataset].dimensions.add(dimension)
+            datasets[dataset].measures.add(measure)
 
         d = {}
+        # in the query above either dimension or measure could have been None and still added into set, cleaning here
+        none = str(None)
         for k in datasets.keys():
             d[k] = {}
+            datasets[k].dimensions.discard(none)
+            datasets[k].measures.discard(none)
             d[k]['dimensions'] = list(datasets[k].dimensions)
             d[k]['measures'] = list(datasets[k].measures)
 
