@@ -172,7 +172,7 @@ def transitive(iri):
     key_internal = f'internal:{iri}'
     key_external = f'external:{iri}'
     for common in red.sunion(key_internal, key_external):
-        for reltype in SkosAnalyzer.relations:
+        for reltype in SkosAnalyzer.relations + 'sameAs':
             key = f'related:{reltype}:{common}'
             for ds in red.smembers(key):
                 log_related('skosTransitive', common, iri, ds, red)
