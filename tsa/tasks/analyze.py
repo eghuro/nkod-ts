@@ -63,10 +63,13 @@ def do_analyze(iri, task, is_prio=False):
         try:
             r = fetch(iri, log, red)
         except RobotsRetry as e:
+            red.srem(key, iri)
             task.retry(countdown=e.delay)
         except requests.exceptions.RequestException as e:
+            red.srem(key, iri)
             task.retry(exc=e)
         except GeventTimeout as e:  # this is gevent.timeout.Timeout
+            red.srem(key, iri)
             task.retry(exc=e, countdown=e.seconds)
 
         try:
@@ -351,4 +354,3 @@ def store_named_analysis(results, key):
         pipe.sadd('purgeable', key)
         pipe.set(key, json.dumps(results))
         pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
-        pipe.execute()
