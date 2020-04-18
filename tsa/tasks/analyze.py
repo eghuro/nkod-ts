@@ -5,13 +5,14 @@ import logging
 import rdflib
 import redis
 import requests
+import urllib3
 from celery import chord, group
 from reppy.robots import Robots
 from gevent.timeout import Timeout as GeventTimeout
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
-from tsa.compression import SizeException, decompress_7z
+from tsa.compression import SizeException, decompress_7z, decompress_gzip
 from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.extensions import redis_pool
 from tsa.monitor import monitor
@@ -90,7 +91,7 @@ def do_analyze(iri, task, is_prio=False):
             try:
                 store_content(iri, r, red)
             except SizeException:
-                log.error(f'File is too large: {iri}')
+                log.warn(f'File is too large: {iri}')
             else:
                 pipeline = group(index.si(iri, guess), run_analyzer.si(iri, guess))
         if is_prio:
@@ -116,11 +117,14 @@ def do_decompress(task, iri, type, is_prio=False):
     log = logging.getLogger(__name__)
     red = redis.Redis(connection_pool=redis_pool)
 
+    key = f'distributions'
     try:
         r = fetch(iri, log, red)
     except RobotsRetry as e:
+        red.srem(key, iri)
         task.retry(countdown=e.delay)
     except requests.exceptions.RequestException as e:
+        red.srem(key, iri)
         task.retry(exc=e)
 
     def gen_iri_guess(iri, r):
@@ -167,6 +171,12 @@ def do_decompress(task, iri, type, is_prio=False):
         else:
             return g.apply_async()
 
+    g = group([t for t in gen_tasks(iri, r)])
+    if is_prio:
+        return g.apply_async(queue='high_priority')
+    else:
+        return g.apply_async()
+
 
 def test_content_length(iri, r, log):
     """Test content length header if the distribution is not too large."""
@@ -174,7 +184,7 @@ def test_content_length(iri, r, log):
         conlen = int(r.headers.get('Content-Length'))
         if conlen > 512 * 1024 * 1024:
             # Due to redis limitation
-            log.error(f'Skipping {iri} as it is too large: {conlen!s}')
+            log.warn(f'Skipping {iri} as it is too large: {conlen!s}')
             raise Skip()
 
 
@@ -281,7 +291,7 @@ def store_analysis(results, iri):
         pipe.execute()
 
 
-@celery.task
+@celery.task(throws=(UnicodeDecodeError))
 def run_one_analyzer(analyzer_token, key, format_guess):
     """Run one analyzer identified by its token."""
     log = logging.getLogger(__name__)
@@ -293,7 +303,7 @@ def run_one_analyzer(analyzer_token, key, format_guess):
         red = redis.Redis(connection_pool=redis_pool)
         g.parse(data=red.get(key), format=format_guess)
         return json.dumps(analyzer.analyze(g))
-    except rdflib.plugin.PluginException:
+    except (rdflib.plugin.PluginException, UnicodeDecodeError):
         log.debug('Failed to parse graph')
         return None
 
