@@ -242,6 +242,7 @@ class GenericAnalyzer(AbstractAnalyzer):
     """Basic RDF dataset analyzer inspecting general properties not related to any particular vocabulary."""
 
     token = 'generic'
+    relations = ['sameAs']
 
     def analyze(self, graph):
         """Basic graph analysis."""
@@ -290,6 +291,28 @@ class GenericAnalyzer(AbstractAnalyzer):
         for row in graph.query('SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b }'):
             yield row['a'], 'sameAs'
             yield row['b'], 'sameAs'
+
+
+class SchemaHierarchicalGeoAnalyzer(AbstractAnalyzer):
+
+    token = 'schema-hierarchical-geo'
+    relations = ['containedInPlace']
+
+    def find_relation(self, graph):
+        q = '''
+        PREFIX schema: <http://schema.org/>
+        SELECT ?x ?place WHERE {
+            ?x schema:containedInPlace ?place
+        }
+        '''
+        for row in graph.query(q):
+            x = str(row['x'])
+            place = str(row['place'])
+            yield x, 'containedInPlace'
+            yield place, 'containedInPlace'
+
+    def analyze(self, graph):
+        return {}
 
 
 class QbDataset(object):
