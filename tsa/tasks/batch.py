@@ -17,17 +17,19 @@ from tsa.tasks.analyze import analyze, process_endpoint
 def _log_dataset_distribution(g, log, access, endpoint, red):
     dcat = Namespace('http://www.w3.org/ns/dcat#')
     accesses = frozenset(access + endpoint)
-    pipe = red.pipeline()
-    for ds in g.subjects(RDF.type, dcat.Dataset):
-        pipe.sadd('dcatds', str(ds))
-        key = f'dsdistr:{ds!s}'
-        pipe.sadd('purgeable', 'dcatds', key)
-        for dist in g.objects(ds, dcat.distribution):
-            for downloadURL in g.objects(dist, dcat.downloadURL):
-                if str(downloadURL) in accesses:
-                    log.debug('Distribution {downloadURL!s} from DCAT dataset {ds!s}')
-                    pipe.sadd(key, str(downloadURL))
-    pipe.execute()
+    with red.pipeline() as pipe:
+        for ds in g.subjects(RDF.type, dcat.Dataset):
+            for dist in g.objects(ds, dcat.distribution):
+                for downloadURL in g.objects(dist, dcat.downloadURL):
+                    if str(downloadURL) in accesses:
+                        log.debug('Distribution {downloadURL!s} from DCAT dataset {ds!s}')
+                        # pipe.hmset('dsdistr', str(ds), str(downloadURL))
+                        # as for now we use batch approach, so this might not be needed
+                        pipe.hset('distrds', str(downloadURL), str(ds))  # reverse mapping in hashset
+                        # this doesn't allow one downloadURL to be in multiple DS
+            # TODO: log here DCAT2 services as well
+        pipe.sadd('purgeable', 'dsdistr', 'distrds')
+        # TODO: expire
 
 
 def _dcat_extractor(g, red, log):
@@ -76,7 +78,11 @@ def _dcat_extractor(g, red, log):
             else:
                 log.warn(f'{access!s} is not a valid access URL')
 
-    #VOID Dataset implies RDF
+        # TODO: scan DCAT2 data services here as well
+
+    # TODO: scan for service description as well
+
+    # VOID Dataset implies RDF
     for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
         for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
             if rfc3987.match(str(dump)):
