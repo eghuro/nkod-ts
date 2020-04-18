@@ -4,8 +4,6 @@
 import os
 import uuid
 
-import raven
-
 
 class Config(object):
     """Base configuration."""
@@ -13,7 +11,6 @@ class Config(object):
     SECRET_KEY = os.environ.get('NKOD_TSA_SECRET', str(uuid.uuid4()))
     APP_DIR = os.path.abspath(os.path.dirname(__file__))  # This directory
     PROJECT_ROOT = os.path.abspath(os.path.join(APP_DIR, os.pardir))
-    RELEASE = raven.fetch_git_sha(PROJECT_ROOT)
     DEBUG_TB_ENABLED = False  # Disable Debug toolbar
     DEBUG_TB_INTERCEPT_REDIRECTS = False
     CACHE_TYPE = 'redis'  # Can be "memcached", "redis", etc.
@@ -26,10 +23,6 @@ class Config(object):
     CACHE_REDIS_HOST = 'redis://redis'
     CACHE_REDIS_PORT = '6379'
     CACHE_REDIS_URL = os.environ['REDIS']
-    SENTRY_CONFIG = {
-        'dsn': 'https://9df1f926d1854fa4884d1f0ce9489a0b@sentry.io/1304923',
-        'release': RELEASE,
-    }
 
     MAX_CONTENT_LENGTH = 1024 * 1024 * 1024
     DEFAULT_EXPIRE = 30 * 24 * 60 * 60  # 30D

@@ -2,22 +2,30 @@
 """The app module, containing the app factory function."""
 
 import logging
+import sentry_sdk
 
+from atenvironment import environment
 from flask import Flask, g, render_template
+from sentry_sdk.integrations.flask import FlaskIntegration
 
 from tsa import commands, public
-from tsa.extensions import cache, cors, sentry
+from tsa.extensions import cache, cors
 from tsa.settings import ProdConfig
 
-
-def create_app(config_object=ProdConfig):
+@environment('DSN')
+def create_app(config_object, dsn_str):
     """An application factory, as explained here: http://flask.pocoo.org/docs/patterns/appfactories/.
 
     :param config_object: The configuration object to use.
     """
+
+    sentry_sdk.init(
+        dsn=dsn_str,
+        integrations=[FlaskIntegration()]
+    )
+
     app = Flask(__name__.split('.')[0])
     app.config.from_object(config_object)
-    app.config['SENTRY_CONFIG']['environment'] = app.config['ENV']
 
     register_extensions(app)
     register_blueprints(app)
@@ -31,7 +39,6 @@ def register_extensions(app):
     """Register Flask extensions."""
     cache.init_app(app)
     cors.init_app(app)
-    sentry.init_app(app, logging=True, level=logging.ERROR)
     return None
 
 
@@ -52,8 +59,7 @@ def register_errorhandlers(app):
         error_code = getattr(error, 'code', 500)
         if error_code == 400:
             error_code = 401
-        return render_template('{0}.html'.format(error_code), event_id=g.sentry_event_id,
-                               public_dsn=sentry.client.get_public_dsn('https')), error_code
+        return render_template('{0}.html'.format(error_code)), error_code
     for errcode in []:
         app.errorhandler(errcode)(render_error)
     return None
