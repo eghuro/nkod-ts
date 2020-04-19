@@ -6,14 +6,13 @@ import rdflib
 import redis
 import requests
 from celery import group
-from reppy.robots import Robots
 from gevent.timeout import Timeout as GeventTimeout
 
 from tsa.celery import celery
 from tsa.compression import SizeException, decompress_7z, decompress_gzip
 from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.monitor import monitor
-from tsa.robots import robots_cache, session, user_agent
+from tsa.robots import session, user_agent, allowed as robots_allowed
 from tsa.tasks.common import TrackableTask
 from tsa.tasks.index import index, index_named
 from tsa.tasks.analyze import analyze
@@ -65,6 +64,9 @@ def do_process(iri, task, is_prio=False):
         except RobotsRetry as e:
             red.srem(key, iri)
             task.retry(countdown=e.delay)
+        except requests.exceptions.HTTPError:
+            log.exception('HTTP Error') # this is a 404 or similar, not worth retrying
+            raise
         except requests.exceptions.RequestException as e:
             red.srem(key, iri)
             task.retry(exc=e)
@@ -226,7 +228,7 @@ def store_content(iri, r, red):
                         raise SizeException(iri)
                     pipe.append(key, chunk)
                     conlen = conlen + len(chunk)
-            pipe.expire(key, 30 * 60)  # 30min
+            pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
             pipe.sadd('purgeable', key)
             pipe.execute()
         monitor.log_size(conlen)
@@ -234,9 +236,9 @@ def store_content(iri, r, red):
 
 def fetch(iri, log, red):
     """Fetch the distribution. Mind robots.txt."""
-    key = f'delay_{Robots.robots_url(iri)!s}'
-    red.sadd('purgeable', key)
-    if not robots_cache.allowed(iri):
+    is_allowed, delay, robots_url = robots_allowed(iri)
+    key = f'delay_{robots_url!s}'
+    if not is_allowed:
         log.warn(f'Not allowed to fetch {iri!s} as {user_agent!s}')
     else:
         wait = red.ttl(key)
@@ -246,10 +248,9 @@ def fetch(iri, log, red):
 
     timeout = 512 * 1024 / 500
     log.debug(f'Timeout {timeout!s} for {iri}')
-    r = session.get(iri, stream=True, headers={'User-Agent': user_agent}, timeout=timeout)
+    r = session.get(iri, stream=True, timeout=timeout)
     r.raise_for_status()
 
-    delay = robots_cache.get(iri).delay
     if delay is not None:
         log.info(f'Recording crawl-delay of {delay} for {iri}')
         try:
@@ -282,6 +283,6 @@ def process_endpoint(iri): #Low priority as we are doing scan of all graphs in t
             if red.sadd(key, g) > 0:
                 tasks.append(index_named.si(iri, g))
                 tasks.append(analyze_named.si(iri, g))
-        red.expire(key, 30 * 24 * 60 * 60)  # 30D
+        red.expire(key, 24 * 60 * 60)  # 30D
         return group(tasks).apply_async(queue='low_priority')
     log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
