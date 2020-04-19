@@ -6,7 +6,7 @@ from celery import group
 from flask import Blueprint, abort, current_app, request, session
 
 from tsa.extensions import redis_pool
-from tsa.tasks.analyze import analyze
+from tsa.tasks.process import process
 from tsa.tasks.batch import inspect_endpoint, inspect_graph
 from tsa.tasks.query import index_distribution_query
 
@@ -21,7 +21,8 @@ def api_analyze_iri():
     if iri is not None:
         current_app.logger.info(f'Analyzing distribution for: {iri}')
         if rfc3987.match(iri):
-            analyze.delay(iri)
+            #batch id not set
+            process.delay(iri)
             return 'OK'
         abort(400)
     else:
@@ -32,7 +33,8 @@ def api_analyze_iri():
         tasks = []
         for iri in iris:
             current_app.logger.info(f'Analyzing distribution for: {iri}')
-            tasks.append(analyze.si(iri))
+            #batch id not set
+            tasks.append(process.si(iri))
         group(tasks).apply_async()
         return 'OK'
 
@@ -55,8 +57,13 @@ def api_analyze_catalog():
                 if rfc3987.match(graph):
                     current_app.logger.info(f'Analyzing named graph {graph} only')
                     red = redis.Redis(connection_pool=redis_pool)
-                    t = inspect_graph.si(iri, graph).apply_async()
-                    red.hset('taskBatchId', t.id, token)
+                    try:
+                        with red.lock(f'batchLock', blocking_timeout=60) as lock:
+                            t = inspect_graph.si(iri, graph).apply_async()
+                            current_app.logger.info(f'Batch id: {token}, task id: {t.id}')
+                            red.hset('taskBatchId', t.id, token)
+                    except redis.exceptions.LockError:
+                        abort(500)
                     return 'OK'
                 else:
                     abort(400)
