@@ -9,7 +9,7 @@ from rdflib.namespace import RDF
 
 from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer
-from tsa.tasks.analyze import analyze, process_endpoint
+from tsa.tasks.process import process, process_endpoint
 from tsa.tasks.common import TrackableTask
 
 
@@ -96,10 +96,10 @@ def _dcat_extractor(g, red, log):
 
     _log_dataset_distribution(g, log, distributions + distributions_priority, endpoints, red)
 
-    tasks = [analyze_priority.si(a) for a in distributions_priority]
+    tasks = [process_priority.si(a) for a in distributions_priority]
     tasks.extend(process_endpoint.si(e) for e in endpoints)
-    tasks.extend(analyze.si(a) for a in distributions)
-    return group(tasks).apply_async()
+    tasks.extend(process.si(a) for a in distributions)
+    return group([tasks[0]]).apply_async()
 
 
 @celery.task(base=TrackableTask)
@@ -132,3 +132,18 @@ def inspect_graph(endpoint_iri, graph_iri):
     log = logging.getLogger(__name__)
     red = inspect_graph.redis
     return _dcat_extractor(inspector.process_graph(endpoint_iri, graph_iri, False), red, log)
+
+
+@celery.task(base=TrackableTask)
+def cleanup_batches():
+    redis = cleanup_batches.redis
+    root = 'batch:'
+    log = logging.getLogger(__name__)
+    for key in redis.keys(f'{root}*'):
+        batch_id = key[len(root):]
+        for task_id in red.smembers(key):
+            task = TrackableTask.AsyncResult(task_id)
+            if task.state in ['SUCCESS', 'FAILURE']:
+                log.warning(f'Removing {task_id} as it is {task.state}')
+                redis.srem(key, task_id)
+                redis.hdel('taskBatchId', task_id)
