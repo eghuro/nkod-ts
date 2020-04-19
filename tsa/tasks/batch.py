@@ -2,7 +2,6 @@
 import logging
 
 import rdflib
-import redis
 import rfc3987
 from celery import group
 from rdflib import Namespace
@@ -10,8 +9,8 @@ from rdflib.namespace import RDF
 
 from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer
-from tsa.extensions import redis_pool
 from tsa.tasks.analyze import analyze, process_endpoint
+from tsa.tasks.common import TrackableTask
 
 
 def _log_dataset_distribution(g, log, access, endpoint, red):
@@ -103,11 +102,11 @@ def _dcat_extractor(g, red, log):
     return group(tasks).apply_async()
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def inspect_catalog(key):
     """Analyze DCAT datasets listed in the catalog."""
     log = logging.getLogger(__name__)
-    red = redis.Redis(connection_pool=redis_pool)
+    red = inspect_catalog.redis
 
     log.debug('Parsing graph')
     try:
@@ -120,16 +119,16 @@ def inspect_catalog(key):
     return _dcat_extractor(g, red, log)
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def inspect_endpoint(iri):
     """Extract DCAT datasets from the given endpoint and schedule their analysis."""
     inspector = SparqlEndpointAnalyzer()
     return group(inspect_catalog.si(key) for key in inspector.peek_endpoint(iri)).apply_async()
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def inspect_graph(endpoint_iri, graph_iri):
     inspector = SparqlEndpointAnalyzer()
     log = logging.getLogger(__name__)
-    red = redis.Redis(connection_pool=redis_pool)
+    red = inspect_graph.redis
     return _dcat_extractor(inspector.process_graph(endpoint_iri, graph_iri, False), red, log)

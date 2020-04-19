@@ -14,9 +14,9 @@ from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.compression import SizeException, decompress_7z, decompress_gzip
 from tsa.endpoint import SparqlEndpointAnalyzer
-from tsa.extensions import redis_pool
 from tsa.monitor import monitor
 from tsa.robots import robots_cache, session, user_agent
+from tsa.tasks.common import TrackableTask
 from tsa.tasks.index import index, index_named
 
 
@@ -34,11 +34,11 @@ class Skip(BaseException):
 
 # Following 2 tasks are doing the same thing but with different priorities
 # This is to speed up known RDF distributions
-@celery.task(bind=True)
+@celery.task(bind=True, base=TrackableTask)
 def analyze_priority(self, iri):
     do_analyze(iri, self, True)
 
-@celery.task(bind=True, time_limit=60)
+@celery.task(bind=True, time_limit=60, base=TrackableTask)
 def analyze(self, iri):
     do_analyze(iri, self)
 
@@ -47,7 +47,7 @@ def do_analyze(iri, task, is_prio=False):
     log = logging.getLogger(__name__)
 
     key = f'distributions'
-    red = redis.Redis(connection_pool=redis_pool)
+    red = task.redis
     if red.sadd(key, iri) == 0:
         log.warn(f'Skipping distribution as it was recently analyzed: {iri!s}')
         return
@@ -104,18 +104,18 @@ def do_analyze(iri, task, is_prio=False):
         return {}
 
 
-@celery.task(bind=True, time_limit=60)
+@celery.task(bind=True, time_limit=60, base=TrackableTask)
 def decompress(self, iri, type):
     do_decompress(self, iri, type)
 
-@celery.task(bind=True)
+@celery.task(bind=True, base=TrackableTask)
 def decompress_prio(self, iri, type):
     do_decompress(self, iri, type, True)
 
 def do_decompress(task, iri, type, is_prio=False):
-    #maybe we cannot pass request here, so we have to make a new one
+    #we cannot pass request here, so we have to make a new one
     log = logging.getLogger(__name__)
-    red = redis.Redis(connection_pool=redis_pool)
+    red = task.redis
 
     key = f'distributions'
     try:
@@ -160,16 +160,12 @@ def do_decompress(task, iri, type, is_prio=False):
             for sub_iri, _ in lst:
                 log.debug(f'Expire {sub_iri}')
                 red.expire(f'data:{sub_iri}', 0)
+        except TypeError:
+            log.exception(f'iri: {iri!s}, type: {type!s}')
         else:
             for sub_iri, guess in lst:
                 yield index.si(sub_iri, guess)
                 yield run_analyzer.si(sub_iri, guess)
-
-        g = group([t for t in gen_tasks(iri, r)])
-        if is_prio:
-            return g.apply_async(queue='high_priority')
-        else:
-            return g.apply_async()
 
     g = group([t for t in gen_tasks(iri, r)])
     if is_prio:
@@ -270,7 +266,7 @@ def fetch(iri, log, red):
     return r
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def run_analyzer(iri, format_guess):
     """Actually run the analyzer."""
     key = f'data:{iri!s}'
@@ -278,10 +274,10 @@ def run_analyzer(iri, format_guess):
     chord(run_one_analyzer.si(token, key, format_guess) for token in tokens)(store_analysis.s(iri))
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def store_analysis(results, iri):
     """Store results of the analysis in redis."""
-    red = redis.Redis(connection_pool=redis_pool)
+    red = store_analysis.redis
     key_result = f'analyze:{iri!s}'
     with red.pipeline() as pipe:
         pipe.set(key_result, json.dumps(results))
@@ -291,7 +287,7 @@ def store_analysis(results, iri):
         pipe.execute()
 
 
-@celery.task(throws=(UnicodeDecodeError))
+@celery.task(base=TrackableTask, throws=(UnicodeDecodeError))
 def run_one_analyzer(analyzer_token, key, format_guess):
     """Run one analyzer identified by its token."""
     log = logging.getLogger(__name__)
@@ -300,12 +296,14 @@ def run_one_analyzer(analyzer_token, key, format_guess):
     try:
         g = rdflib.ConjunctiveGraph()
         log.debug('Parsing graph')
-        red = redis.Redis(connection_pool=redis_pool)
+        red = run_one_analyzer.redis
         g.parse(data=red.get(key), format=format_guess)
         return json.dumps(analyzer.analyze(g))
     except (rdflib.plugin.PluginException, UnicodeDecodeError):
         log.debug('Failed to parse graph')
         return None
+    except ValueError:
+        log.exception(f'Missing data, key: {key}, analyzer: {analyzer_token}, format: {format_guess}')
 
 
 def get_analyzer(analyzer_token):
@@ -316,13 +314,13 @@ def get_analyzer(analyzer_token):
     raise ValueError(analyzer_token)
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def process_endpoint(iri): #Low priority as we are doing scan of all graphs in the endpoint
     log = logging.getLogger(__name__)
 
     """Index and analyze triples in the endpoint."""
     key = f'endpoints'
-    red = redis.Redis(connection_pool=redis_pool)
+    red = process_endpoint.redis
     red.sadd('purgeable', key)
     if red.sadd(key, iri) > 0:
         a = SparqlEndpointAnalyzer()
@@ -338,7 +336,7 @@ def process_endpoint(iri): #Low priority as we are doing scan of all graphs in t
     log.debug(f'Skipping endpoint as it was recently analyzed: {iri!s}')
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def analyze_named(endpoint_iri, named_graph):
     """Analyze triples in a named graph of an endpoint."""
     key = f'analyze:{endpoint_iri!s}:{named_graph!s}'
@@ -347,7 +345,7 @@ def analyze_named(endpoint_iri, named_graph):
     return chord(tasks)(store_named_analysis.si(key))
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def run_one_named_analyzer(token, endpoint_iri, named_graph):
     """Run an analyzer identified by its token on a triples in a named graph of an endpoint."""
     g = rdflib.Graph(store='SPARQLStore', identifier=named_graph)
@@ -356,10 +354,10 @@ def run_one_named_analyzer(token, endpoint_iri, named_graph):
     return json.dumps(a.analyze(g))
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def store_named_analysis(results, key):
     """Store results of the analysis in redis."""
-    red = redis.Redis(connection_pool=redis_pool)
+    red = store_named_analysis.redis
     with red.pipeline() as pipe:
         pipe.sadd('purgeable', key)
         pipe.set(key, json.dumps(results))

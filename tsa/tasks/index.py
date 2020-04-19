@@ -2,31 +2,30 @@
 import logging
 
 import rdflib
-import redis
 from celery import group
 
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
-from tsa.extensions import redis_pool
+from tsa.tasks.common import TrackableTask
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def index_named(iri, named):
     """Index related resources in an endpoint by initializing a SparqlGraph."""
     tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
     return group(run_one_named_indexer.si(token, iri, named) for token in tokens).apply_async()
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def run_one_named_indexer(token, iri, named):
     """Run indexer on the named graph of the endpoint."""
     g = rdflib.Graph(store='SPARQLStore', identifier=named)
     g.open(iri)
-    red = redis.Redis(connection_pool=redis_pool)
+    red = run_one_named_indexer.redis
     return run_indexer(token, f'{iri}/{named}', g, red)
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def index(iri, format_guess):
     """Index related resources."""
     tokens = [it.token for it in AbstractAnalyzer.__subclasses__()]
@@ -73,11 +72,11 @@ def get_analyzer(analyzer_token):
     raise ValueError(analyzer_token)
 
 
-@celery.task
+@celery.task(base=TrackableTask)
 def run_one_indexer(token, iri, format_guess):
     """Extract graph from redis and run indexer identified by token on it."""
     log = logging.getLogger(__name__)
-    red = redis.Redis(connection_pool=redis_pool)
+    red = run_one_indexer.redis
     key = f'data:{iri!s}'
 
     log.debug('Parsing graph')
