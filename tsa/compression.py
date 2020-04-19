@@ -30,6 +30,11 @@ def decompress_gzip(iri, r, red):
     log.debug(f'Size: {len(data)}')
 
     expiration = 30 * 24 * 60 * 60
+    if iri.endswith('.gz'):
+        iri = iri[:-3]
+    else:
+        iri = iri + '/data'
+        #TODO: this might fail the analysis
     key = f'data:{iri}'
     deco_size_total = red.set(key, gzip.decompress(data))
     if deco_size_total > 512 * 1024 * 1024:
@@ -37,8 +42,9 @@ def decompress_gzip(iri, r, red):
         raise SizeException(name)
 
     red.expire(key, expiration)
-    monitor.log_size(conlen)
+    monitor.log_size(deco_size_total)
     log.debug(f'Done decompression, total decompressed size {deco_size_total}')
+    return f'{iri}'
 
 def decompress_7z(iri, r, red):
     """Download a 7z file, decompress it and store contents in redis."""
