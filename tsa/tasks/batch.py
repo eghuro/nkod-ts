@@ -99,7 +99,7 @@ def _dcat_extractor(g, red, log):
     tasks = [process_priority.si(a) for a in distributions_priority]
     tasks.extend(process_endpoint.si(e) for e in endpoints)
     tasks.extend(process.si(a) for a in distributions)
-    return group([tasks[0]]).apply_async()
+    return group(tasks).apply_async()
 
 
 @celery.task(base=TrackableTask)
