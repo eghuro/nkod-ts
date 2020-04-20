@@ -4,6 +4,7 @@ import rfc3987
 import uuid
 from celery import group
 from flask import Blueprint, abort, current_app, request, session
+from redisrwlock import Rwlock, RwlockClient
 
 from tsa.extensions import redis_pool
 from tsa.tasks.process import process
@@ -57,12 +58,14 @@ def api_analyze_catalog():
                 if rfc3987.match(graph):
                     current_app.logger.info(f'Analyzing named graph {graph} only')
                     red = redis.Redis(connection_pool=redis_pool)
-                    try:
-                        with red.lock(f'batchLock', blocking_timeout=60) as lock:
-                            t = inspect_graph.si(iri, graph).apply_async()
-                            current_app.logger.info(f'Batch id: {token}, task id: {t.id}')
-                            red.hset('taskBatchId', t.id, token)
-                    except redis.exceptions.LockError:
+                    client = RwlockClient()
+                    rwlock = client.lock('batchLock', Rwlock.WRITE, timeout=60)
+                    if rwlock.status == Rwlock.OK:
+                        t = inspect_graph.si(iri, graph).apply_async()
+                        current_app.logger.info(f'Batch id: {token}, task id: {t.id}')
+                        red.hset('taskBatchId', t.id, token)
+                        client.unlock(rwlock)
+                    elif rwlock.status == Rwlock.DEADLOCK:
                         abort(500)
                     return 'OK'
                 else:
