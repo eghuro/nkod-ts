@@ -1,9 +1,11 @@
 """Celery tasks for batch processing of endpoiint or DCAT catalog."""
 import logging
 
+import redis
 import rdflib
 import rfc3987
 from celery import group
+from celery.result import AsyncResult
 from rdflib import Namespace
 from rdflib.namespace import RDF
 
@@ -11,24 +13,7 @@ from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.tasks.process import process, process_endpoint
 from tsa.tasks.common import TrackableTask
-
-
-def _log_dataset_distribution(g, log, access, endpoint, red):
-    dcat = Namespace('http://www.w3.org/ns/dcat#')
-    accesses = frozenset(access + endpoint)
-    with red.pipeline() as pipe:
-        for ds in g.subjects(RDF.type, dcat.Dataset):
-            for dist in g.objects(ds, dcat.distribution):
-                for downloadURL in g.objects(dist, dcat.downloadURL):
-                    if str(downloadURL) in accesses:
-                        log.debug('Distribution {downloadURL!s} from DCAT dataset {ds!s}')
-                        # pipe.hmset('dsdistr', str(ds), str(downloadURL))
-                        # as for now we use batch approach, so this might not be needed
-                        pipe.hset('distrds', str(downloadURL), str(ds))  # reverse mapping in hashset
-                        # this doesn't allow one downloadURL to be in multiple DS
-            # TODO: log here DCAT2 services as well
-        pipe.sadd('purgeable', 'dsdistr', 'distrds')
-        # TODO: expire
+from tsa.extensions import redis_pool
 
 
 def _dcat_extractor(g, red, log):
@@ -36,6 +21,7 @@ def _dcat_extractor(g, red, log):
     endpoints = []
     dcat = Namespace('http://www.w3.org/ns/dcat#')
     dcterms = Namespace('http://purl.org/dc/terms/')
+    nkod = Namespace('https://data.gov.cz/slovník/nkod/mediaTyp')
     media_priority = set([
         'https://www.iana.org/assignments/media-types/application/rdf+xml',
         'https://www.iana.org/assignments/media-types/application/trig',
@@ -59,42 +45,55 @@ def _dcat_extractor(g, red, log):
     queue = distributions
 
     log.info("Extracting distributions")
-    #DCAT Distribution
-    for d in g.subjects(RDF.type, dcat.Distribution):
-        # put RDF distributions into a priority queue
-        for media in g.objects(d, dcat.mediaType):
-            if str(media) in media_priority:
-                queue = distributions_priority
+    #DCAT dataset
+    with red.pipeline() as pipe:
+        for ds in g.subjects(RDF.type, dcat.Dataset):
+            #dataset titles (possibly multilang)
+            for t in g.objects(ds, dcterms.title):
+                key = f'dstitle:{ds!s}:{t.language}' if t.language is not None else f'dstitle:{ds!s}'
+                red.set(key, t.value)
 
-        for format in g.objects(d, dcterms.format):
-            if str(format) in format_priority:
-                queue = distributions_priority
+            #DCAT Distribution
+            for d in g.objects(ds, dcat.distribution):
+                # put RDF distributions into a priority queue
+                for media in g.objects(d, dcat.mediaType):
+                    if str(media) in media_priority:
+                        queue = distributions_priority
 
-        # access URL to files
-        for access in g.objects(d, dcat.downloadURL):
-            if rfc3987.match(str(access)):
-                queue.append(str(access))
-            else:
-                log.warn(f'{access!s} is not a valid access URL')
+                for format in g.objects(d, dcterms.format):
+                    if str(format) in format_priority:
+                        queue = distributions_priority
 
-        # TODO: scan DCAT2 data services here as well
+                # data.gov.cz specific
+                for format in g.objects(d, nkod.mediaType):
+                    if 'rdf' in str(format):
+                        queue = distributions_priority
 
-    # TODO: scan for service description as well
+                # download URL to files
+                for downloadURL in g.objects(d, dcat.downloadURL):
+                    if rfc3987.match(str(downloadURL)):
+                        log.debug(f'Distribution {downloadURL!s} from DCAT dataset {ds!s}')
+                        queue.append(downloadURL)
+                        pipe.hset('dsdistr', str(ds), str(downloadURL))
+                        pipe.hset('distrds', str(downloadURL), str(ds))
+                    else:
+                        log.warn(f'{access!s} is not a valid download URL')
 
-    # VOID Dataset implies RDF
-    for dataset in g.subjects(RDF.type, rdflib.URIRef('http://rdfs.org/ns/void#Dataset')):
-        for dump in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#dataDump')):
-            if rfc3987.match(str(dump)):
-                distributions_priority.append(str(dump))
-            else:
-                log.warn(f'{dump!s} is not a valid dump URL')
-        for endpoint in g.objects(dataset, rdflib.URIRef('http://rdfs.org/ns/void#sparqlEndpoint')):
-            if rfc3987.match(str(endpoint)):
-                endpoints.append(str(endpoint))
-            else:
-                log.warn(f'{endpoint!s} is not a valid endpoint URL')
+                # scan for DCAT2 data services here as well
+                for access in g.objects(d, dcat.accessURL):
+                    for endpoint in g.objects(access, dcat.endpointURL):
+                        if rfc3987.match(str(endpoint)):
+                            log.debug(f'Endpoint {endpoint!s} from DCAT dataset {ds!s}')
+                            endpoints.append(endpoint)
+                            pipe.hset('dsdistr', str(ds), str(endpoint))
+                            pipe.hset('distrds', str(endpoint), str(ds))
+                    else:
+                        log.warn(f'{endpoint!s} is not a valid endpoint URL')
 
-    _log_dataset_distribution(g, log, distributions + distributions_priority, endpoints, red)
+        pipe.sadd('purgeable', 'dsdistr', 'distrds')
+        # TODO: expire
+        pipe.execute()
+    # TODO: possibly scan for service description as well
 
     tasks = [process_priority.si(a) for a in distributions_priority]
     tasks.extend(process_endpoint.si(e) for e in endpoints)
@@ -112,6 +111,7 @@ def inspect_catalog(key):
     try:
         g = rdflib.ConjunctiveGraph()
         g.parse(data=red.get(key), format='n3')
+        red.delete(key)
     except rdflib.plugin.PluginException:
         log.debug('Failed to parse graph')
         return None
@@ -120,30 +120,29 @@ def inspect_catalog(key):
 
 
 @celery.task(base=TrackableTask)
-def inspect_endpoint(iri):
-    """Extract DCAT datasets from the given endpoint and schedule their analysis."""
-    inspector = SparqlEndpointAnalyzer()
-    return group(inspect_catalog.si(key) for key in inspector.peek_endpoint(iri)).apply_async()
-
-
-@celery.task(base=TrackableTask)
 def inspect_graph(endpoint_iri, graph_iri):
-    inspector = SparqlEndpointAnalyzer()
     log = logging.getLogger(__name__)
+    inspector = SparqlEndpointAnalyzer()
     red = inspect_graph.redis
     return _dcat_extractor(inspector.process_graph(endpoint_iri, graph_iri, False), red, log)
 
 
-@celery.task(base=TrackableTask)
+@celery.task()
 def cleanup_batches():
-    redis = cleanup_batches.redis
+    #client = RwlockClient()
+    red = redis.Redis(connection_pool=redis_pool)
     root = 'batch:'
     log = logging.getLogger(__name__)
-    for key in redis.keys(f'{root}*'):
+    #rwlock = client.lock('batchLock', Rwlock.WRITE, timeout=Rwlock.FOREVER)
+    #if rwlock.status == Rwlock.OK:
+    for key in red.keys(f'{root}*'):
         batch_id = key[len(root):]
         for task_id in red.smembers(key):
-            task = TrackableTask.AsyncResult(task_id)
+            task = AsyncResult(task_id)
             if task.state in ['SUCCESS', 'FAILURE']:
                 log.warning(f'Removing {task_id} as it is {task.state}')
-                redis.srem(key, task_id)
-                redis.hdel('taskBatchId', task_id)
+                red.srem(key, task_id)
+        #client.unlock(rwlock)
+    #elif rwlock.status == Rwlock.DEADLOCK:
+    #    logging.getLogger(__name__).exception('Deadlock, retrying')
+    #    self.retry()
