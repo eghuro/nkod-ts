@@ -39,9 +39,9 @@ def fetch_robots(robots_iri):
             return red.get(key)
         else:
             red.sadd('purgeable', key, f'delay_{robots_iri}')
-            r = session.get(robots_iri)
+            r = session.get(robots_iri, verify=False)
             if r.status_code != 200:
-                red.set(key, None)
+                red.set(key, "")
                 red.expire(key, 30 * 24 * 60 * 60)
                 return None
             else:
