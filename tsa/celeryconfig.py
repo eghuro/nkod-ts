@@ -82,4 +82,8 @@ task_routes = {
     'tsa.tasks.query.*': {
         'queue': 'query'
     },
+
+    'tsa.tasks.batch.cleanup_batches': {
+        'queue': 'low_priority'
+    },
 }
