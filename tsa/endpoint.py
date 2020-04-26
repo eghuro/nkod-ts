@@ -98,8 +98,17 @@ class SparqlEndpointAnalyzer(object):
         """Extract named graphs from the given endpoint."""
         g = Graph(store='SPARQLStore')
         g.open(endpoint)
-        for row in g.query('select distinct ?g where { GRAPH ?g {?s ?p ?o} }'):
+        cnt = 0
+        for row in g.query('select distinct ?g where { GRAPH ?g {} }'):
+            cnt = cnt + 1
             yield row['g']
+        if cnt == 0:
+            # certain SPARQL endpoints (aka Virtuoso) do not support queries above, so we have to use the one below
+            # however, it's very inefficient and will likely timeout
+            log = logging.getLogger(__name__)
+            log.warn(f'Endpoint {endpoint} does not support the preferred SPARQL query, falling back, this will likely timeout though')
+            for row in g.query('select distinct ?g where { GRAPH ?g {?s ?p ?o} }'):
+                yield row['g']
 
     # TODO
     # all above is extracting DCAT for use in batch
