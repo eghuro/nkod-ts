@@ -7,6 +7,7 @@ services:
             PYTHON_VERSION: ${PYTHON_VERSION}
     environment:
       - REDIS=redis://redis:6379/0
+      - DSN=
     ports:
       - "80:8000"
     depends_on:
@@ -24,6 +25,7 @@ services:
             PYTHON_VERSION: ${PYTHON_VERSION}
     environment:
       - REDIS=redis://redis:6379/0
+      - DSN=
     user: nobody
     depends_on:
       - redis
@@ -35,10 +37,11 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION}
     environment:
       - REDIS=redis://redis:6379/0
+      - DSN=
     user: nobody
     depends_on:
       - redis
-    command: celery worker -l info -A tsa.celery -Q default -c 20
+    command: celery worker -l info -A tsa.celery -Q default,query -c 20
   celery_low:
     build:
       context: .
@@ -46,18 +49,8 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION}
     environment:
       - REDIS=redis://redis:6379/0
+      - DSN=
     user: nobody
     depends_on:
       - redis
     command: celery worker -l info -A tsa.celery -Q low_priority -c 5
-  celery_query:
-    build:
-      context: .
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION}
-    environment:
-      - REDIS=redis://redis:6379/0
-    user: nobody
-    depends_on:
-      - redis
-    command: celery worker -l info -A tsa.celery --pool gevent --concurrency=500 -Q query
