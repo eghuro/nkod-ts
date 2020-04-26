@@ -5,6 +5,7 @@ from redisrwlock import Rwlock, RwlockClient
 from celery import Task
 
 from tsa.extensions import redis_pool
+from tsa.query import query
 
 class TrackableException(BaseException):
     pass
@@ -69,15 +70,18 @@ class TrackableTask(Task):
         batch_id = red.hget('taskBatchId', task_id)
         red.srem(f'batch:{batch_id}', task_id)
             #keep taskBatchId as we need it for children tasks
-        if red.scard(f'batch:{batch_id}') == 0:
-            logging.getLogger(__name__).info(f'Completed batch {batch_id}')
-                # here we can cleanup taskBatchId
-            for key in red.hkeys('taskBatchId'):
-                for b_id in red.hget('taskBatchId', key):
-                    if b_id == batch_id:
-                        red.hdel('taskBatchId', key)
+        on_complete(batch_id, red)
             #client.unlock(rwlock)
         #elif rwlock.status == Rwlock.DEADLOCK:
             #logging.getLogger(__name__).exception('Deadlock, retrying')
             #self.retry()
 
+def on_complete(batch_id, red):
+    if red.scard(f'batch:{batch_id}') == 0:
+        logging.getLogger(__name__).info(f'Completed batch {batch_id}')
+        # here we can cleanup taskBatchId
+        for key in red.hkeys('taskBatchId'):
+            for b_id in red.hget('taskBatchId', key):
+                if b_id == batch_id:
+                    red.hdel('taskBatchId', key)
+        query(batch_id, red)

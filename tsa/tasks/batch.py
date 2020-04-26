@@ -11,8 +11,8 @@ from rdflib.namespace import RDF
 
 from tsa.celery import celery
 from tsa.endpoint import SparqlEndpointAnalyzer
+from tsa.tasks.common import TrackableTask, on_complete
 from tsa.tasks.process import process, process_endpoint
-from tsa.tasks.common import TrackableTask
 from tsa.extensions import redis_pool
 from tsa.redis import ds_title, ds_distr
 
@@ -145,6 +145,9 @@ def cleanup_batches():
             if task.state in ['SUCCESS', 'FAILURE']:
                 log.warning(f'Removing {task_id} as it is {task.state}')
                 red.srem(key, task_id)
+
+        on_complete(red, batch_id)
+
         #client.unlock(rwlock)
     #elif rwlock.status == Rwlock.DEADLOCK:
     #    logging.getLogger(__name__).exception('Deadlock, retrying')

@@ -6,15 +6,14 @@ import json
 import redis
 import rfc3987
 import uuid
-from celery import group
 from flask import Blueprint, abort, current_app, jsonify, request
 
 from tsa.extensions import redis_pool
 from tsa.monitor import Monitor
-from tsa.tasks.query import *
 from tsa.tasks.system import cleanup
 from tsa.report import query_dataset
 from tsa.cache import cached
+from tsa.query import query
 
 blueprint = Blueprint('public', __name__, static_folder='../static')
 
@@ -54,62 +53,17 @@ def _graph_iris(red):
             yield f'{e}:{g}'
 
 
-def _get_known_distributions(red):
-    distr_endpoints = red.smembers('distributions').union(frozenset(_graph_iris(red)))
-    failed_skipped = red.smembers('stat:failed').union(red.smembers('stat:skipped'))
-    return distr_endpoints.difference(failed_skipped)
+
 
 
 @blueprint.route('/api/v1/query/analysis', methods=['POST'])
 def batch_analysis():
     """
     Get a big report for all required distributions.
-
-    Get a list of distributions in request body as JSON, compile analyses,
-    query the index return the compiled report.
     """
     red = redis.Redis(connection_pool=redis_pool)
-    lst = request.get_json()
-    if lst is None:
-        lst = _get_known_distributions(red)
-
-    small = 'small' in request.args
-    trans = 'noTransitive' not in request.args
-    cross = 'noCross' not in request.args
-    stats = 'stats' in request.args
     result_id = str(uuid.uuid4())
-    ###
-    ###red.sadd('relationship', 'skosCross', 'skosTransitive')
-    iris = list(lst)
-
-    current_app.logger.info("Profile")
-    iris = list(lst)
-    chain([
-        compile_analyses.si(iris),
-        ###cut_small.s(small),
-        ###extend_queries.s(iris),
-        ###add_stats.s(stats),
-        #store_analysis.s(result_id),
-        split_analyses_by_iri.s(result_id),
-        merge_analyses_by_distribution_iri_and_store.s(result_id),
-        gen_related_ds.si(),
-        index_distribution_query.chunks(zip(lst), 8)
-    ]).apply_async(queue='query')
-
-    #current_app.logger.info("Stage 2")
-    ###gather_initial.chunks(zip(all_gather(lst, red)), 8).apply_async(queue='query').get()
-    ###iris = all_process(lst, red)
-    ###if trans:
-    ###    current_app.logger.info("Stage 2a")
-    ###    transitive.chunks(zip(iris), 8).apply_async(queue='query').get()
-    ###if cross:
-    ###    current_app.logger.info("Stage 2b")
-    ###    log_common.chunks(itertools.product(iris, repeat=2), 8).apply_async(queue='query').get()
-    #### index
-
-
-    ###
-    #analysis_query(list(lst), small, transitive, cross, stats, result_id).apply_async()
+    query(result_id, red)
     return result_id
 
 
