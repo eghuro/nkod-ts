@@ -15,7 +15,10 @@ def query_dataset(iri):
 def query_related(ds_iri):
     key = f'distrquery:{ds_iri}'
     red = redis.Redis(connection_pool=redis_pool)
-    return json.loads(red.get(key))
+    try:
+        return json.loads(red.get(key))
+    except TypeError:
+        return []
 
 
 def query_profile(ds_iri):
@@ -23,7 +26,10 @@ def query_profile(ds_iri):
     red = redis.Redis(connection_pool=redis_pool)
     log = logging.getLogger(__name__)
 
-    analysis = json.loads(red.get(key))
+    analysis = json.loads(red.get(key))  # raises TypeError if key is missing
+
+    supported_languages = ["cs", "en"]
+
     output = {}
     output["triples"] = analysis["generic"]["triples"]
 
@@ -31,7 +37,7 @@ def query_profile(ds_iri):
     for cls in analysis["generic"]["classes"].keys():
         iri = cls
         count = analysis["generic"]["classes"][cls]
-        label = create_labels(ds_iri, ["cs", "en"])
+        label = create_labels(ds_iri, supported_languages)
         output["classes"].append({'iri': iri, 'count': count, 'label': label})
 
     output["predicates"] = []
@@ -46,14 +52,31 @@ def query_profile(ds_iri):
         for concept in analysis["skos"]["concepts"].keys():
             output["concepts"].append({
                 'iri': concept,
-                'label': create_labels(concept, ["cs", "en"])
+                'label': create_labels(concept, supported_languages)
             })
 
     output["schemata"] = []
     for schema in analysis["skos"]["schema"].keys():
         output["schemata"].append({
-            'iri': concept,
-            'label': create_labels(schema, ["cs", "en"])
+            'iri': schema,
+            'label': create_labels(schema, supported_languages)
+        })
+
+    dimensions, measures = set(), set()
+    datasets = analysis["cube"]["datasets"]
+    for ds in datasets.keys():
+        dimensions.update(datasets[ds]["dimensions"])
+        measures.update(datasets[ds]["measures"])
+    output["dimensions"], output["measures"] = [], []
+    for d in dimensions:
+        output["dimensions"].append({
+            'iri': d,
+            'label': create_labels(d, supported_languages)
+        })
+    for m in measures:
+        output["measures"].append({
+            'iri': m,
+            'label': create_labels(m, supported_languages)
         })
 
     return output
