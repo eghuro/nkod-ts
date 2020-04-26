@@ -32,8 +32,8 @@ def hello():
 def cleanup(prefix, extra):
     red = redis.Redis(connection_pool=redis_pool)
     log = logging.getLogger(__name__)
-    cache_items = [key for key in red.keys() if key.startswith(prefix)]
-    log.debug('Flask cache items: ' + str(cache_items))
-    extra.extend(cache_items)
+    #cache_items = [key for key in red.keys() if key.startswith(prefix)]
+    #log.debug('Flask cache items: ' + str(cache_items))
+    #extra.extend(cache_items)
     extra.extend(red.smembers('purgeable'))
     red.delete(*extra)

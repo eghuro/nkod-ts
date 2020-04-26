@@ -14,6 +14,7 @@ from tsa.endpoint import SparqlEndpointAnalyzer
 from tsa.tasks.process import process, process_endpoint
 from tsa.tasks.common import TrackableTask
 from tsa.extensions import redis_pool
+from tsa.redis import ds_title, ds_distr
 
 
 def _dcat_extractor(g, red, log):
@@ -46,11 +47,12 @@ def _dcat_extractor(g, red, log):
 
     log.info("Extracting distributions")
     #DCAT dataset
+    dsdistr, distrds = ds_distr()
     with red.pipeline() as pipe:
         for ds in g.subjects(RDF.type, dcat.Dataset):
             #dataset titles (possibly multilang)
             for t in g.objects(ds, dcterms.title):
-                key = f'dstitle:{ds!s}:{t.language}' if t.language is not None else f'dstitle:{ds!s}'
+                key = ds_title(ds, t.language)
                 red.set(key, t.value)
 
             #DCAT Distribution
@@ -74,8 +76,8 @@ def _dcat_extractor(g, red, log):
                     if rfc3987.match(str(downloadURL)):
                         log.debug(f'Distribution {downloadURL!s} from DCAT dataset {ds!s}')
                         queue.append(downloadURL)
-                        pipe.hset('dsdistr', str(ds), str(downloadURL))
-                        pipe.hset('distrds', str(downloadURL), str(ds))
+                        pipe.hset(dsdistr, str(ds), str(downloadURL))
+                        pipe.hset(distrds, str(downloadURL), str(ds))
                     else:
                         log.warn(f'{access!s} is not a valid download URL')
 
@@ -85,12 +87,13 @@ def _dcat_extractor(g, red, log):
                         if rfc3987.match(str(endpoint)):
                             log.debug(f'Endpoint {endpoint!s} from DCAT dataset {ds!s}')
                             endpoints.append(endpoint)
-                            pipe.hset('dsdistr', str(ds), str(endpoint))
-                            pipe.hset('distrds', str(endpoint), str(ds))
+
+                            pipe.hset(dsdistr, str(ds), str(endpoint))
+                            pipe.hset(distrds, str(endpoint), str(ds))
                     else:
                         log.warn(f'{endpoint!s} is not a valid endpoint URL')
 
-        pipe.sadd('purgeable', 'dsdistr', 'distrds')
+        pipe.sadd('purgeable', dsdistr, distrds)
         # TODO: expire
         pipe.execute()
     # TODO: possibly scan for service description as well

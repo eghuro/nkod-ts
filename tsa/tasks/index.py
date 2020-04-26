@@ -7,6 +7,7 @@ from celery import group
 from tsa.analyzer import AbstractAnalyzer
 from tsa.celery import celery
 from tsa.tasks.common import TrackableTask
+from tsa.redis import data as data_key, expiration, KeyRoot, related as related_key
 
 
 @celery.task(base=TrackableTask)
@@ -35,30 +36,20 @@ def index(iri, format_guess):
 def run_indexer(token, iri, g, red):
     """Get all available analyzers and let them find relationships."""
     log = logging.getLogger(__name__)
-    exp = 30 * 24 * 60 * 60  # 30D
+    exp = expiration[KeyRoot.RELATED]
 
     log.info(f'Indexing {iri}')
     cnt = 0
     analyzer = get_analyzer(token)
-    for key, rel_type in analyzer.find_relation(g):
-        with red.pipeline() as pipe:
+    with red.pipeline() as pipe:
+        for key, rel_type in analyzer.find_relation(g):
             log.debug(f'Distribution: {iri!s}, relationship type: {rel_type!s}, shared key: {key!s}')
-            # pipe.sadd(f'related:{key!s}', iri)
-            pipe.sadd(f'related:{rel_type!s}:{key!s}', iri)
-            pipe.sadd(f'relationship', rel_type)
-            pipe.sadd(f'key:{iri!s}', key)
-            pipe.sadd(f'reltype:{iri!s}', rel_type)
-
-            # pipe.expire(f'related:{key!s}', exp)
-            pipe.expire(f'related:{rel_type!s}:{key!s}', exp)
-            pipe.expire(f'relationship', exp)
-            pipe.expire(f'key:{iri!s}', exp)
-            pipe.expire(f'reltype:{iri!s}', exp)
-
-            pipe.sadd('purgeable', f'related:{rel_type!s}:{key!s}', f'relationship', f'key:{iri!s}', f'reltype:{iri!s}')
-
-            cnt = cnt + 4
-            pipe.execute()
+            key = related_key(rel_type, key)
+            pipe.sadd(key, iri)
+            pipe.expire(key, exp)
+            pipe.sadd('purgeable', key)
+            cnt = cnt + 1
+        pipe.execute()
 
     log.info(f'Indexed {cnt!s} records')
     return cnt
@@ -77,7 +68,7 @@ def run_one_indexer(token, iri, format_guess):
     """Extract graph from redis and run indexer identified by token on it."""
     log = logging.getLogger(__name__)
     red = run_one_indexer.redis
-    key = f'data:{iri!s}'
+    key = data_key(iri)
 
     log.debug('Parsing graph')
     try:

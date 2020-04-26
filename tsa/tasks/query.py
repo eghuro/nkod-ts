@@ -13,64 +13,176 @@ from celery import group, chain, chord
 
 from tsa.celery import celery
 from tsa.extensions import redis_pool
-from tsa.analyzer import SkosAnalyzer
+from tsa.analyzer import AbstractAnalyzer, SkosAnalyzer
+from tsa.redis import EXPIRATION_CACHED, EXPIRATION_TEMPORARY, related as related_key
 
-#TODO: add an endpoint: here's SPARQL endpoint and many graphs in a JSON list, run the whole process inc. analysis_query
+
+### ANALYSIS ###
+
+@celery.task
+def compile_analyses(iris):
+    red = redis.Redis(connection_pool=redis_pool)
+    analyzes = [json.loads(x) for x in [red.get(f'analyze:{iri}') for iri in iris] if x is not None]
+    #analyzes = [json.loads(dump) for dump in red.lrange('analyze', 0, -1)]
+    #red.delete('analyses', 'predicates', 'classes', *[f'external:{iri}' for iri in iris], *[f'internal:{iri}' for iri in iris])
+    return analyzes  # the BIG report
 
 
-# See:
-# - https://www.ovh.com/blog/doing-big-automation-with-celery/
-# - https://github.com/celery/celery/issues/5000
-# - https://github.com/celery/celery/issues/5286
-# - https://github.com/celery/celery/issues/5327
-# - https://github.com/ovh/celery-dyrygent
-#
-# TL;DR: certain bugs in celery prevent us from using desired canvas and celery-dyrygent project also has bugs
+@celery.task
+def split_analyses_by_iri(analyses, id):
+    red = redis.Redis(connection_pool=redis_pool)
+    iris = set()
+    log = logging.getLogger(__name__)
+    #with red.pipeline() as pipe:  # MULTI ... EXEC block
+    for analysis in analyses:  # long loop
+        log.debug(str(analysis))
+        if 'analysis' in analysis.keys():
+            content = analysis['analysis']
+            if 'iri' in analysis.keys():
+                iri = analysis['iri']
+                iris.add(iri)
+            elif 'endpoint' in analysis.keys() and 'graph' in analysis.keys():
+                iri = f'{analysis["endpoint"]}/{analysis["graph"]}'
+                iris.add(analysis['endpoint'])  # this is because named graph is not extracted from DCAT
+            else:
+                log.error('Missing iri and endpoint/graph')
 
-# @celery.task
-# def analysis_query(iris, small, trans, cross, stats, id):
-#     red = redis.Redis(connection_pool=redis_pool)
-#     red.sadd('relationship', 'skosCross', 'skosTransitive')
-#
-#     log = logging.getLogger(__name__)
-#     log.info(f'IRIs: {len(iris)}')
-#
-#     chain_lst = [
-#         group([index_distribution_query.si(iri) for iri in all_missing(iris, red)]),
-#         group([gather_initial.si(iri) for iri in iris])
-#     ]
-#     if trans:
-#         chain_lst.append(group([transitive.si(iri) for iri in iris]))
-#     if cross:
-#         chain_lst.append(group([log_common.si(iri_in, iri_out) for iri_in, iri_out in itertools.product(iris, iris)]))
-#
-#     #using Workflow -> cannot pass arguments -> using redis key 'anal'
-#     chain_lst.extend([
-#         compile_analyses.si(iris),
-#         cut_small.si(small),
-#         extend_queries.si(iris),
-#         add_stats.si(stats),
-#         store_analysis.si(id)
-#     ])
-#
-#     canvas = chain(chain_lst)
-#     wf = Workflow()
-#     wf.add_celery_canvas(canvas)
-#     return wf
+            log.debug(iri)
+            key = f'analysis:{id}:{iri!s}'
+            log.debug(key)
+            red.rpush(key, json.dumps(content))
+            #red.expire(key, EXPIRATION_TEMPORARY)
+
+        else:
+            log.error('Missing content')
+    return list(iris)
 
 
 @celery.task(ignore_result=True)
+def merge_analyses_by_distribution_iri_and_store(iris, id):
+    red = redis.Redis(connection_pool=redis_pool)
+    log = logging.getLogger(__name__)
+
+    # Get list of dcat:Dataset iris for distribution iris
+    # and create a mapping of (used) distribution iris per dataset iri
+
+    # in key = f'analysis:{id}:{iri!s}' there's a list of analyses (list of lists)
+
+    ds = []
+    if len(iris) > 0:
+        ds_iris = red.hmget('distrds', *iris)
+        for distr_iri, ds_iri in zip(iris, ds_iris):
+            if ds_iri is None:
+                log.error(f'Missing DS IRI for {distr_iri}')
+                continue
+
+            key = f'dsdistr:{ds_iri}'
+            red.sadd(key, distr_iri)
+            red.expire(key, EXPIRATION_TEMPORARY)
+            ds.append(ds_iri)
+
+    ds = set(ds)
+
+    # Merge individual distribution analyses into DS analysis (for query endpoint) and into batch report
+    batch = {}
+    for ds_iri in ds:
+        batch[ds_iri] = {}
+        key_out = f'dsanalyses:{ds_iri}'
+        for distr_iri in red.smembers(f'dsdistr:{ds_iri}'):
+            key_in = f'analysis:{id}:{distr_iri!s}'
+            for a in [json.loads(a) for a in red.lrange(key_in, 0, -1)]:
+                for b in a:  # flatten
+                    for key in b.keys():  # 1 element
+                        batch[ds_iri][key] = b[key]  # merge dicts
+            #red.expire(key_in, 0)
+        red.set(key_out, json.dumps(batch[ds_iri]))
+        red.expire(key_out, EXPIRATION_CACHED)
+        #red.expire(f'dsdistr:{ds_iri}', 0)
+
+        # now we have ds_analyses for every ds_iri known
+        # those are NOT labeled by the batch query id as it will be used in querying from dcat-ap-viewer
+
+    # dump the batch report
+    key = f'analysis:{id}'
+    red.set(key, json.dumps(batch))
+    red.expire(key, EXPIRATION_CACHED)
+    log.info("Done")
+
+
+### INDEX ###
+reltypes = sum((analyzer.relations for analyzer in AbstractAnalyzer.__subclasses__() if 'relations' in analyzer.__dict__), [])
+
+@celery.task
+def gen_related_ds():
+    red = redis.Redis(connection_pool=redis_pool)
+    related_ds = {}
+
+    for rel_type in reltypes:
+        related_ds[rel_type] = dict()
+        root = f'related:{rel_type!s}:'
+        for key in red.scan_iter(match=f'related:{rel_type!s}:*'):
+            token = key[len(root):]
+            related_dist = red.smembers(related_key(rel_type, token))  # these are related by token
+            if len(related_dist) > 0:
+                related_ds[rel_type][token] = list(set(red.hmget('distrds', *related_dist)))
+
+    with red.pipeline() as pipe:
+        pipe.set('relatedds', json.dumps(related_ds))
+        pipe.sadd('purgeable', 'relatedds')
+        pipe.expire(key, EXPIRATION_CACHED)
+        pipe.execute()
+    return related_ds
+
+
+@celery.task(ignore_result=True)
+def index_distribution_query(iri):
+    """Query the index and construct related datasets for the iri of a distribution.
+
+    Final result is stored in redis.
+    """
+    red = redis.Redis(connection_pool=redis_pool)
+    #if not missing(iri, red):
+    #    return
+
+    related_ds = json.loads(red.get('relatedds'))
+    current_dataset = red.hget('distrds', iri)
+
+    for rel_type in reltypes:
+        to_delete = []
+        for token in related_ds[rel_type].keys():
+            if current_dataset in related_ds[rel_type][token]:
+                related_ds[rel_type][token].remove(current_dataset)
+            else:
+                to_delete.append(token)
+        for token in to_delete:
+            del related_ds[rel_type][token]
+
+    exp = EXPIRATION_CACHED  # 30D
+    key = f'distrquery:{current_dataset}'
+    with red.pipeline() as pipe:
+        pipe.set(key, json.dumps(related_ds))
+        pipe.sadd('purgeable', key)
+        pipe.expire(key, exp)
+        pipe.execute()
+
+
+### MISC ###
+@celery.task  # (ignore_result=True)
 def store_analysis(analyses, id):
     red = redis.Redis(connection_pool=redis_pool)
     log = logging.getLogger(__name__)
 
-    key = f'analysis:{id}'
+    key = f'distr_analysis:{id}'
     if analyses is not None:
         red.set(key, json.dumps([x for x in analyses if x is not None]))
     else:
         red.set(key, json.dumps([]))
-    red.expire(key, 30*24*60*60)
-    log.info("Done")
+    red.expire(key, EXPIRATION_CACHED)
+    # log.info("Done")
+    return analyses
+
+
+
 
 
 @celery.task
@@ -85,7 +197,7 @@ def extend_queries(analyses, lst):
     log = logging.getLogger(__name__)
     red = redis.Redis(connection_pool=redis_pool)
     log.info('Gather queries')
-    analyses.extend(x for x in gather_queries(lst, red, log)) #FIXME: gather_queries has for iri in iris
+    analyses.extend(x for x in gather_queries(lst, red, log))  # FIXME: gather_queries has a for loop iri in iris
     return analyses
 
 
@@ -99,18 +211,6 @@ def add_stats(analyses, stats):
             'size': retrieve_size_stats(red) #check
         })
     return analyses
-
-
-@celery.task
-def compile_analyses(iris):
-    red = redis.Redis(connection_pool=redis_pool)
-    predicates = red.hgetall('predicates')
-    classes = red.hgetall('classes')
-    analyzes = [json.loads(dump) for dump in red.lrange('analyses', 0, -1)]
-    analyzes.append({'predicates': dict(OrderedDict(sorted(predicates.items(), key=lambda kv: kv[1], reverse=True)))})
-    analyzes.append({'classes': dict(OrderedDict(sorted(classes.items(), key=lambda kv: kv[1], reverse=True)))})
-    red.delete('predicates', 'classes', *[f'external:{iri}' for iri in iris], *[f'internal:{iri}' for iri in iris])
-    return analyzes
 
 
 @celery.task(ignore_result=True)
@@ -127,9 +227,9 @@ def gather_initial(iri):
         for analysis in json.loads(x):  # from several analyzers
             if analysis is None:
                 continue
-            analysis = json.loads(analysis)
-            if analysis is None:
-                continue
+            #analysis = json.loads(analysis)
+            #if analysis is None:
+            #    continue
 
             if 'predicates' in analysis:
                 log.info(f'Predicates: {analysis["predicates"]!s}')
@@ -156,12 +256,12 @@ def gather_initial(iri):
             pipe.rpush('analyses', json.dumps({'iri': iri, 'analysis': analysis}))
         pipe.sadd('gathered', iri)
 
-        expiration = 60*60 #1H
-        pipe.expire('predicates', expiration)
-        pipe.expire('classes', expiration)
-        pipe.expire('analyses', expiration)
-        pipe.expire(f'external:{iri}', expiration)
-        pipe.expire(f'internal:{iri}', expiration)
+        expiration = EXPIRATION_TEMPORARY #1H
+        #pipe.expire('predicates', expiration)
+        #pipe.expire('classes', expiration)
+        #pipe.expire('analyses', expiration)
+        #pipe.expire(f'external:{iri}', expiration)
+        #pipe.expire(f'internal:{iri}', expiration)
         pipe.execute()
     #log.info(f'Gathered initial, {len(predicates.keys())}')
 
@@ -171,14 +271,18 @@ def transitive(iri):
     red = redis.Redis(connection_pool=redis_pool)
     key_internal = f'internal:{iri}'
     key_external = f'external:{iri}'
+    # relations =  sum((analyzer.relations for analyzer in AbstractAnalyzer.__subclasses__() if 'relations' in analyzer.__dict__), [])
     for common in red.sunion(key_internal, key_external):
-        for reltype in SkosAnalyzer.relations + 'sameAs':
+        for reltype in SkosAnalyzer.relations:
             key = f'related:{reltype}:{common}'
             for ds in red.smembers(key):
                 log_related('skosTransitive', common, iri, ds, red)
         key = f'related:sameAs:{common}'
         for ds in red.smembers(key):
             log_related('sameAsTransitive', common, iri, ds, red)
+        key = f'related:containedInPlace:{common}'
+        for ds in red.smembers(key):
+            log_related('containedInPlaceTransitive', common, iri, ds, red)
 
 
 @celery.task(ignore_result=True)
@@ -188,52 +292,14 @@ def log_common(iri_in, iri_out):
         log_related('cross', common, iri_in, iri_out, red)
 
 
-@celery.task(ignore_result=True)
-def index_distribution_query(iri):
-    """Query the index and construct related datasets for the iri of a distribution.
-
-    Final result is stored in redis.
-    """
-    red = redis.Redis(connection_pool=redis_pool)
-    if not missing(iri, red):
-        return
-
-    related = defaultdict(set)
-    for rel_type in red.smembers(f'reltype:{iri}'):
-        for key in red.smembers(f'key:{iri}'):
-            related[rel_type].update(red.smembers(f'related:{rel_type!s}:{key!s}'))
-        related[rel_type].discard(iri)
-        related[rel_type] = list(related[rel_type])
-
-    exp = 30 * 24 * 60 * 60  # 30D
-    key = f'distrquery:{iri}'
-    with red.pipeline() as pipe:
-        pipe.set(key, json.dumps(related))
-        pipe.sadd('purgeable', key)
-        pipe.expire(key, exp)
-        pipe.execute()
-
-
 def log_related(rel_type, common, iri_in, iri_out, red):
     """Log related distributions."""
-    exp = 30 * 24 * 60 * 60  # 30D
+    exp = EXPIRATION_CACHED  # 30D
     pipe = red.pipeline()
     pipe.sadd(f'related:{rel_type}:{common!s}', iri_in)
     pipe.sadd(f'related:{rel_type}:{common!s}', iri_out)
-    pipe.sadd(f'key:{iri_in!s}', common)
-    pipe.sadd(f'key:{iri_out!s}', common)
-    pipe.sadd(f'reltype:{iri_in!s}', rel_type)
-    pipe.sadd(f'reltype:{iri_out!s}', rel_type)
-    pipe.expire(f'related:{rel_type}:{common!s}', exp)
-    pipe.expire(f'key:{iri_in!s}', exp)
-    pipe.expire(f'key:{iri_out!s}', exp)
-    pipe.expire(f'reltype:{iri_in!s}', exp)
-    pipe.expire(f'reltype:{iri_out!s}', exp)
-    keys = [f'related:{rel_type}:{common!s}',
-            f'key:{iri_in!s}',
-            f'key:{iri_out!s}',
-            f'reltype:{iri_in!s}',
-            f'reltype:{iri_out!s}']
+
+    keys = [f'related:{rel_type}:{common!s}']
     pipe.sadd('purgeable', *keys)
 
     # distribution queries no longer valid

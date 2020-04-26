@@ -2,81 +2,38 @@
 import redis
 import rfc3987
 import uuid
-from celery import group
+import time
 from flask import Blueprint, abort, current_app, request, session
-from redisrwlock import Rwlock, RwlockClient
 
 from tsa.extensions import redis_pool
-from tsa.tasks.process import process
-from tsa.tasks.batch import inspect_endpoint, inspect_graph
-from tsa.tasks.query import index_distribution_query
+from tsa.tasks.batch import inspect_graph
 
 blueprint = Blueprint('analyze', __name__, static_folder='../static')
-
-
-@blueprint.route('/api/v1/analyze/distribution', methods=['POST'])
-def api_analyze_iri():
-    """Analyze a distribution."""
-    iri = request.args.get('iri', None)
-
-    if iri is not None:
-        current_app.logger.info(f'Analyzing distribution for: {iri}')
-        if rfc3987.match(iri):
-            #batch id not set
-            process.delay(iri)
-            return 'OK'
-        abort(400)
-    else:
-        iris = []
-        for iri in request.get_json():
-            if rfc3987.match(iri):
-                iris.append(iri)
-        tasks = []
-        for iri in iris:
-            current_app.logger.info(f'Analyzing distribution for: {iri}')
-            #batch id not set
-            tasks.append(process.si(iri))
-        group(tasks).apply_async()
-        return 'OK'
 
 
 @blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
 def api_analyze_catalog():
     """Analyze a catalog."""
-    if 'token' in session:
-        token = session['token']
-    else:
-        token = str(uuid.uuid4())
-        session['token'] = token
+    if 'token' not in session:
+        session['token'] = str(uuid.uuid4())
 
-    if 'sparql' in request.args:
-        iri = request.args.get('sparql', None)
-        graph = request.args.get('graph', None)
-        current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
-        if rfc3987.match(iri):
-            if graph is not None:
-                if rfc3987.match(graph):
-                    current_app.logger.info(f'Analyzing named graph {graph} only')
-                    red = redis.Redis(connection_pool=redis_pool)
-                    client = RwlockClient()
-                    rwlock = client.lock('batchLock', Rwlock.WRITE, timeout=60)
-                    if rwlock.status == Rwlock.OK:
-                        t = inspect_graph.si(iri, graph).apply_async()
-                        current_app.logger.info(f'Batch id: {token}, task id: {t.id}')
-                        red.hset('taskBatchId', t.id, token)
-                        client.unlock(rwlock)
-                    elif rwlock.status == Rwlock.DEADLOCK:
-                        abort(500)
-                    return 'OK'
-                else:
-                    abort(400)
-            else:
-                current_app.logger.warn(f'Requested full endpoint scan')
-                ch = (inspect_endpoint.si(iri) | index_distribution_query.si(iri))
-                ch.batch_id = token
-                ch.apply_async()
-                return 'OK'
-        else:
-            abort(400)
+    iri = request.args.get('sparql', None)
+    graph = request.args.get('graph', None)
+    if iri is not None and graph is not None and rfc3987.match(iri) and rfc3987.match(graph):
+            current_app.logger.info(f'Analyzing endpoint {iri}, named graph {graph}')
+            red = redis.Redis(connection_pool=redis_pool)
+
+            #Throttling
+            key = f'batch:{session["token"]}'
+            queueLength = red.scard(key)
+            while queueLength > 1000:
+                current_app.logger.warning(f'Queue length: {queueLength}')
+                time.sleep(60)
+                queueLength = red.scard(key)
+
+            t = inspect_graph.si(iri, graph).apply_async()
+            current_app.logger.info(f'Batch id: {session["token"]}, task id: {t.id}')
+            red.hset('taskBatchId', t.id, session["token"])
+            return ''
     else:
         abort(400)

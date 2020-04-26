@@ -50,11 +50,10 @@ Run the following commands to bootstrap your environment ::
     pip install -r requirements.txt
     # Start redis server
     # Run concurrently
-    REDIS=redis://localhost:6379/0 celery worker -l info -A tsa.celery -Q high_priority -c 10
-    REDIS=redis://localhost:6379/0 nice -n 10 celery worker -l info -A tsa.celery -Q default -c 20
-    REDIS=redis://localhost:6379/0 nice -n 20 celery worker -l info -A tsa.celery -Q low_priority -c 5
-    REDIS=redis://localhost:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
-    REDIS=redis://localhost:6379/0 celery worker -l info -A tsa.celery --pool gevent --concurrency=500 -Q query
+    DSN=https://9df1f926d1854fa4884d1f0ce9489a0b@o176131.ingest.sentry.io/1304923 REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 celery worker -l warning -A tsa.celery -Q high_priority -c 10 -n high
+    DSN=https://9df1f926d1854fa4884d1f0ce9489a0b@o176131.ingest.sentry.io/1304923 REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 nice -n 10 celery worker -l info -A tsa.celery -Q default,query -c 20 -n default
+    DSN=https://9df1f926d1854fa4884d1f0ce9489a0b@o176131.ingest.sentry.io/1304923 REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 nice -n 20 celery worker -l warning -A tsa.celery -Q low_priority -c 5 -n low
+    DSN=https://9df1f926d1854fa4884d1f0ce9489a0b@o176131.ingest.sentry.io/1304923 REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
 
 
 In general, before running shell commands, set the ``FLASK_APP`` and
@@ -70,14 +69,7 @@ Deployment
 To deploy::
 
     export FLASK_DEBUG=0
-    # Start redis server
-    # Run concurrently
-    REDIS=redis://localhost:6379/0 celery worker -l info -A tsa.celery -Q high_priority -c 10
-    REDIS=redis://localhost:6379/0 nice -n 10 celery worker -l info -A tsa.celery -Q default -c 20
-    REDIS=redis://localhost:6379/0 nice -n 20 celery worker -l info -A tsa.celery -Q low_priority -c 5
-    REDIS=redis://redis:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
-    REDIS=redis://localhost:6379/0 celery worker -l info -A tsa.celery --pool gevent --concurrency=500 -Q query
-
+    # Follow commands above to bootstrap the environment
 In your production environment, make sure the ``FLASK_DEBUG`` environment
 variable is unset or is set to ``0``, so that ``ProdConfig`` is used.
 

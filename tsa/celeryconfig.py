@@ -1,9 +1,9 @@
 """Celery configuration."""
 import os
 
-broker_url = os.environ['REDIS']
+broker_url = os.environ['REDIS_CELERY']
 broker_pool_limit = 100
-result_backend = os.environ['REDIS']
+result_backend = os.environ['REDIS_CELERY']
 task_serializer = 'json'
 result_serializer = 'json'
 accept_content = ['json']
@@ -13,6 +13,12 @@ include = ['tsa.tasks.analyze', 'tsa.tasks.batch', 'tsa.tasks.index', 'tsa.tasks
 broker_transport_options = {
     'fanout_prefix': True,
     'fanout_patterns': True
+}
+beat_schedule = {
+    'cleanup-batches-every-minute': {
+        'task': 'tsa.tasks.batch.cleanup_batches',
+        'schedule': 60.0,
+    },
 }
 task_create_missing_queues = True
 task_default_queue = 'default'
@@ -75,5 +81,5 @@ task_routes = {
 
     'tsa.tasks.query.*': {
         'queue': 'query'
-    }
+    },
 }

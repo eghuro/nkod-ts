@@ -6,6 +6,7 @@ import rfc3987
 from rdflib import Graph
 
 from tsa.extensions import redis_pool
+from tsa.redis import data as data_key, expiration, KeyRoot
 
 
 class SparqlEndpointAnalyzer(object):
@@ -82,11 +83,11 @@ class SparqlEndpointAnalyzer(object):
 
         if dump_result_to_redis:
             r = redis.Redis(connection_pool=redis_pool)
-            key = f'data:{endpoint!s}:{graph_iri!s}'
+            key = data_key(endpoint, graph_iri)
             with r.pipeline() as pipe:
                 pipe.set(key, result.serialize(format='n3'))
                 pipe.sadd('purgeable', key)
-                pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
+                pipe.expire(key, expiration[KeyRoot.DATA])
                 pipe.execute()
             log.info(key)
             return key
