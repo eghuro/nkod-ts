@@ -24,7 +24,8 @@ class Monitor(object):
     def log_size(self, size):
         """Record distribution size."""
         key = 'stat:size'
-        self.__client.lpush(key, size)
+        if type(size) in [str, int]:
+            self.__client.lpush(key, size)
 
 
 monitor = Monitor()

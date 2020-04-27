@@ -50,8 +50,12 @@ Run the following commands to bootstrap your environment ::
     pip install -r requirements.txt
     # Start redis server
     # Run concurrently
-    REDIS=redis://localhost:6379/0 celery worker -l info -A tsa.celery
-    REDIS=redis://localhost:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
+    DSN=XXX REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 celery worker -l warning -A tsa.celery -Q high_priority -c 10 -n high
+    DSN=XXX REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 nice -n 10 celery worker -l info -A tsa.celery -Q default,query -c 20 -n default
+    DSN=XXX REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 nice -n 20 celery worker -l warning -A tsa.celery -Q low_priority -c 5 -n low
+    DSN=XXX REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
+    DSN=XXX REDIS_CELERY=redis://localhost:6379/1 REDIS=redis://localhost:6379/0 nice -n 10 celery -l info -A tsa.celery beat
+
 
 In general, before running shell commands, set the ``FLASK_APP`` and
 ``FLASK_DEBUG`` environment variables ::
@@ -66,11 +70,7 @@ Deployment
 To deploy::
 
     export FLASK_DEBUG=0
-    # Start redis server
-    # Run concurrently
-    REDIS=redis://redis:6379/0 celery worker -l info -A tsa.celery --pool gevent --concurrency=500
-    REDIS=redis://redis:6379/0 gunicorn -k gevent -w 4 -b 0.0.0.0:8000 autoapp:app
-
+    # Follow commands above to bootstrap the environment
 In your production environment, make sure the ``FLASK_DEBUG`` environment
 variable is unset or is set to ``0``, so that ``ProdConfig`` is used.
 

@@ -6,6 +6,7 @@ import rfc3987
 from rdflib import Graph
 
 from tsa.extensions import redis_pool
+from tsa.redis import data as data_key, expiration, KeyRoot
 
 
 class SparqlEndpointAnalyzer(object):
@@ -15,105 +16,84 @@ class SparqlEndpointAnalyzer(object):
         str1 = """
         construct {
           ?ds a <http://www.w3.org/ns/dcat#Dataset>;
-          <http://www.w3.org/ns/dcat#keyword> ?keyword;
-          <http://purl.org/dc/terms/accrualPeriodicity> ?accrualPeriodicity;
-          <http://purl.org/dc/terms/contactPoint> ?contactPoint;
-          <http://purl.org/dc/terms/description> ?description;
-          <http://purl.org/dc/terms/language> ?language;
-          <http://purl.org/dc/terms/modified> ?modified;
           <http://purl.org/dc/terms/title> ?title;
-          <http://purl.org/dc/terms/publisher> ?publisher;
-          <http://purl.org/dc/terms/rightsHolder> ?holder;
-          <http://purl.org/dc/terms/spatial> ?spatial;
-          <http://purl.org/dc/terms/language> ?language;
           <http://www.w3.org/ns/dcat#distribution> ?d.
 
           ?d a <http://www.w3.org/ns/dcat#Distribution>;
-          <http://purl.org/dc/terms/title> ?dist_title;
-          <http://www.w3.org/ns/dcat#accessURL> ?accessURL;
-          <http://purl.org/dc/terms/format> ?format.
+          <http://www.w3.org/ns/dcat#downloadURL> ?downloadURL;
+          <http://purl.org/dc/terms/format> ?format;
+          <http://www.w3.org/ns/dcat#mediaType> ?media;
+          <https://data.gov.cz/slovník/nkod/mediaType> ?mediaNkod.
 
-          ?d a <http://www.w3.org/ns/dcat#Distribution>;
-          <http://purl.org/dc/terms/title> "SPARQL Endpoint";
-          <http://purl.org/dc/terms/description> "SPARQL Endpoint";
-          <http://www.w3.org/ns/dcat#accessURL>
-          """
-
-        str2 = """
-         ?void a <http://rdfs.org/ns/void#Dataset>;
-         <http://rdfs.org/ns/void#dataDump> ?dump;
-         <http://rdfs.org/ns/void#exampleResource> ?exampleResource;
-         <http://rdfs.org/ns/void#sparqlEndpoint> ?sparqlEndpoint;
-         <http://rdfs.org/ns/void#triples> ?triples.
+          ?d <http://www.w3.org/ns/dcat#accessURL> ?accessPoint.
+          ?accessPoint <http://www.w3.org/ns/dcat#endpointURL> ?endpointUrl;
+          <http://www.w3.org/ns/dcat#endpointDescription> ?sd.
        }
        """
 
         str3 = """
        where {
-         ?ds a <http://www.w3.org/ns/dcat#Dataset>;
-         <http://purl.org/dc/terms/title> ?title.
-         OPTIONAL { ?ds <http://purl.org/dc/terms/publisher> ?publisher. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/language> ?language. }
-
-         OPTIONAL { ?ds <http://purl.org/dc/terms/accrualPeriodicity> ?accrualPeriodicity. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/contactPoint> ?contactPoint. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/description> ?description. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/language> ?language. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/modified> ?modified. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/title> ?title. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/publisher> ?publisher. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/rightsHolder> ?holder. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/spatial> ?spatial. }
-         OPTIONAL { ?ds <http://purl.org/dc/terms/language> ?language. }
-         OPTIONAL { ?ds <http://www.w3.org/ns/dcat#keyword> ?keyword. }
-         OPTIONAL { ?ds <http://www.w3.org/ns/dcat#distribution> ?d.
-           ?d a <http://www.w3.org/ns/dcat#Distribution>.
-           OPTIONAL { ?d <http://purl.org/dc/terms/title> ?dist_title. }
-           OPTIONAL { ?d <http://www.w3.org/ns/dcat#accessURL> ?accessURL. }
-           OPTIONAL { ?d <http://purl.org/dc/terms/format> ?format. }
+         ?ds a <http://www.w3.org/ns/dcat#Dataset>.
+         ?ds <http://purl.org/dc/terms/title> ?title.
+         ?ds <http://www.w3.org/ns/dcat#distribution> ?d.
+         OPTIONAL { ?d <http://www.w3.org/ns/dcat#downloadURL> ?downloadURL. }
+         OPTIONAL { ?d <http://purl.org/dc/terms/format> ?format. }
+         OPTIONAL { ?d <http://www.w3.org/ns/dcat#mediaType> ?media. }
+         OPTIONAL { ?d <http://www.w3.org/ns/dcat#accessURL> ?accessPoint.
+            ?accessPoint <http://www.w3.org/ns/dcat#endpointURL> ?endpointUrl.
+            OPTIONAL { ?accessPoint <http://www.w3.org/ns/dcat#endpointDescription> ?sd. }
          }
-
-         OPTIONAL {
-             ?void a <http://rdfs.org/ns/void#Dataset>.
-             OPTIONAL { ?void <http://rdfs.org/ns/void#dataDump> ?dump. }
-             OPTIONAL { ?void <http://rdfs.org/ns/void#exampleResource> ?exampleResource. }
-             OPTIONAL { ?void <http://rdfs.org/ns/void#sparqlEndpoint> ?sparqlEndpoint. }
-             OPTIONAL { ?void <http://rdfs.org/ns/void#triples> ?triples. }
-         }
+         OPTIONAL { ?d <https://data.gov.cz/slovník/nkod/mediaType> ?mediaNkod. }
        }
        """
 
         if named is not None:
-            return f'{str1} <{endpoint}>. {str2} from <{named}> {str3}'
+            return f'{str1} from <{named}> {str3}'
         else:
             logging.getLogger(__name__).warn('No named graph when constructing catalog from {endpoint!s}')
-            return f'{str1} <{endpoint}>. {str2} {str3}'
+            return f'{str1} {str3}'
 
-    def peek_endpoint(self, endpoint):
-        """Extract DCAT datasets from the given endpoint and store them in redis."""
+    def process_graph(self, endpoint, graph_iri):
+        """Extract DCAT datasets from the given named graph of an endpoint."""
         log = logging.getLogger(__name__)
         if not rfc3987.match(endpoint):
             log.warn(f'{endpoint!s} is not a valid endpoint URL')
-            return
-        for graph_iri in self.get_graphs_from_endpoint(endpoint):
-            if not rfc3987.match(graph_iri):
-                log.warn(f'{graph_iri!s} is not a valid graph URL')
-                continue
-            g = Graph(store='SPARQLStore', identifier=graph_iri)
-            g.open(endpoint)
+            return None
+        if not rfc3987.match(graph_iri):
+            log.warn(f'{graph_iri!s} is not a valid graph URL')
+            return None
 
-            r = redis.Redis(connection_pool=redis_pool)
-            key = f'data:{endpoint!s}:{g!s}'
-            with r.pipeline() as pipe:
-                pipe.set(key, g.serialize(format='turtle'))
-                pipe.sadd('purgeable', key)
-                pipe.expire(key, 30 * 24 * 60 * 60)  # 30D
-                pipe.execute()
-            yield key
+        g = Graph(store='SPARQLStore', identifier=graph_iri)
+        g.open(endpoint)
+
+        result = Graph()
+        for s, p, o in g.query(self.__query(endpoint, graph_iri)):
+            result.add( (s, p, o) )
+
+        return result
 
     def get_graphs_from_endpoint(self, endpoint):
         """Extract named graphs from the given endpoint."""
         g = Graph(store='SPARQLStore')
         g.open(endpoint)
-        for row in g.query('select distinct ?g where { GRAPH ?g {?s ?p ?o} }'):
+        cnt = 0
+        for row in g.query('select distinct ?g where { GRAPH ?g {} }'):
+            cnt = cnt + 1
             yield row['g']
+        if cnt == 0:
+            # certain SPARQL endpoints (aka Virtuoso) do not support queries above, so we have to use the one below
+            # however, it's very inefficient and will likely timeout
+            log = logging.getLogger(__name__)
+            log.warn(f'Endpoint {endpoint} does not support the preferred SPARQL query, falling back, this will likely timeout though')
+            for row in g.query('select distinct ?g where { GRAPH ?g {?s ?p ?o} }'):
+                yield row['g']
+
+    # TODO
+    # all above is extracting DCAT for use in batch
+    # however we might have some real datasets there
+    # -> service description
+    # and VOID
+
+
+    #if we have SD of ?endpoint then use query '?x sd:endpoint ?endpoint; sd:namedGraph/sd:name ?name.' on SD to
+    #get named graphs (taken from LPA)

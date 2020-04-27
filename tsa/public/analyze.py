@@ -1,81 +1,39 @@
 """Endpoints to start the analysis."""
 import redis
 import rfc3987
-from celery import group
-from flask import Blueprint, abort, current_app, request
+import uuid
+import time
+from flask import Blueprint, abort, current_app, request, session
 
 from tsa.extensions import redis_pool
-from tsa.robots import session
-from tsa.tasks.analyze import analyze, process_endpoint
-from tsa.tasks.batch import inspect_catalog, inspect_endpoint
-from tsa.tasks.query import index_distribution_query
+from tsa.tasks.batch import inspect_graph
 
 blueprint = Blueprint('analyze', __name__, static_folder='../static')
-
-
-@blueprint.route('/api/v1/analyze/distribution', methods=['POST'])
-def api_analyze_iri():
-    """Analyze a distribution."""
-    iri = request.args.get('iri', None)
-
-    if iri is not None:
-        current_app.logger.info(f'Analyzing distribution for: {iri}')
-        if rfc3987.match(iri):
-            analyze.delay(iri)
-            return 'OK'
-        abort(400)
-    else:
-        iris = []
-        for iri in request.get_json():
-            if rfc3987.match(iri):
-                iris.append(iri)
-        tasks = []
-        for iri in iris:
-            current_app.logger.info(f'Analyzing distribution for: {iri}')
-            tasks.append(analyze.si(iri))
-        group(tasks).apply_async()
-        return 'OK'
-
-
-@blueprint.route('/api/v1/analyze/endpoint', methods=['POST'])
-def api_analyze_endpoint():
-    """Analyze an Endpoint."""
-    iri = request.args.get('sparql', None)
-
-    current_app.logger.info(f'Analyzing SPARQL endpoint: {iri}')
-
-    if rfc3987.match(iri):
-        (process_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
-        return 'OK'
-    abort(400)
 
 
 @blueprint.route('/api/v1/analyze/catalog', methods=['POST'])
 def api_analyze_catalog():
     """Analyze a catalog."""
-    if 'iri' in request.args:
-        iri = request.args.get('iri', None)
-        current_app.logger.info(f'Analyzing a DCAT catalog from a distribution under {iri}')
-        if rfc3987.match(iri):
-            key = f'catalog:{iri}'
-            req = session.get(iri)
+    if 'token' not in session:
+        session['token'] = str(uuid.uuid4())
+
+    iri = request.args.get('sparql', None)
+    graph = request.args.get('graph', None)
+    if iri is not None and graph is not None and rfc3987.match(iri) and rfc3987.match(graph):
+            current_app.logger.info(f'Analyzing endpoint {iri}, named graph {graph}')
             red = redis.Redis(connection_pool=redis_pool)
-            with red.pipeline() as pipe:
-                pipe.set(key, req.text)
-                exp = 30 * 24 * 60 * 60  # 30D
-                pipe.expire(key, exp)
-                pipe.sadd('purgeable', key)
-                pipe.execute()
-            req.close()
-            inspect_catalog.si(key).apply_async()
-            return 'OK'
-        abort(400)
-    elif 'sparql' in request.args:
-        iri = request.args.get('sparql', None)
-        current_app.logger.info(f'Analyzing datasets from an endpoint under {iri}')
-        if rfc3987.match(iri):
-            (inspect_endpoint.si(iri) | index_distribution_query.si(iri)).apply_async()
-            return 'OK'
-        abort(400)
+
+            #Throttling
+            key = f'batch:{session["token"]}'
+            queueLength = red.scard(key)
+            while queueLength > 1000:
+                current_app.logger.warning(f'Queue length: {queueLength}')
+                time.sleep(60)
+                queueLength = red.scard(key)
+
+            t = inspect_graph.si(iri, graph).apply_async()
+            current_app.logger.info(f'Batch id: {session["token"]}, task id: {t.id}')
+            red.hset('taskBatchId', t.id, session["token"])
+            return ''
     else:
         abort(400)

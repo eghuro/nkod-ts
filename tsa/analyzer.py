@@ -4,7 +4,11 @@ import logging
 from abc import ABC
 from collections import defaultdict
 
+import redis
 import rfc3987
+
+from tsa.extensions import redis_pool
+from tsa.redis import ds_title
 
 
 class AbstractAnalyzer(ABC):
@@ -15,6 +19,7 @@ class CubeAnalyzer(AbstractAnalyzer):
     """RDF dataset analyzer focusing on DataCube."""
 
     token = 'cube'
+    relations = ['qb']
 
     def find_relation(self, graph):
         """We consider DSs to be related if they share a resource on dimension."""
@@ -79,28 +84,27 @@ class CubeAnalyzer(AbstractAnalyzer):
     def analyze(self, graph):
         """Analysis of a datacube."""
         datasets = defaultdict(QbDataset)
-        prefix = 'http://purl.org/linked-data/cube#'
-        for row in graph.query(f'SELECT DISTINCT ?ds WHERE {{?ds a <{prefix}DataSet>}}'):
-            dataset = row['ds']
-            qa = f'SELECT DISTINCT ?structure WHERE {{ <{dataset}> <{prefix}structure> ?structure }}'
-            for row in graph.query(qa):
-                structure = row['structure']
-                qb = f'SELECT DISTINCT ?component WHERE {{ <{structure}> <{prefix}component> ?component }}'
-                for row in graph.query(qb):
-                    component = row['component']
-
-                    qc = f'SELECT DISTINCT ?dimension WHERE {{ <{component}> <{prefix}dimension> ?dimension }}'
-                    for row in graph.query(qc):
-                        dimension = row['dimension']
-                        datasets[str(dataset)].dimensions.add(str(dimension))
-                    qd = f'SELECT DISTINCT ?measure WHERE {{ <{component}> <{prefix}measure> ?measure }}'
-                    for row in graph.query(qd):
-                        measure = row['measure']
-                        datasets[str(dataset)].measures.add(str(measure))
+        q = '''
+        PREFIX qb: <http://purl.org/linked-data/cube#>
+        SELECT DISTINCT ?ds ?dimension ?measure WHERE {
+        ?ds a qb:DataSet; qb:structure/qb:component ?component.
+        { ?component qb:dimension ?dimension. } UNION { ?component qb:measure ?measure. }
+        }
+        '''
+        for row in graph.query(q):
+            dataset = str(row['ds'])
+            dimension = str(row['dimension'])
+            measure = str(row['measure'])
+            datasets[dataset].dimensions.add(dimension)
+            datasets[dataset].measures.add(measure)
 
         d = {}
+        # in the query above either dimension or measure could have been None and still added into set, cleaning here
+        none = str(None)
         for k in datasets.keys():
             d[k] = {}
+            datasets[k].dimensions.discard(none)
+            datasets[k].measures.discard(none)
             d[k]['dimensions'] = list(datasets[k].dimensions)
             d[k]['measures'] = list(datasets[k].measures)
 
@@ -210,11 +214,11 @@ class SkosAnalyzer(AbstractAnalyzer):
             - related by skos:related, skos:semanticRelation, skos:broader,
         skos:broaderTransitive, skos:narrower, skos:narrowerTransitive
         """
-        q = 'SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme}'
+        q = 'SELECT DISTINCT ?scheme WHERE {?a <http://www.w3.org/2004/02/skos/core#inScheme> ?scheme.}'
         for row in graph.query(q):
             yield row['scheme'], 'inScheme'
 
-        q = 'SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/core#member> ?a}'
+        q = 'SELECT DISTINCT ?collection WHERE {?collection <http://www.w3.org/2004/02/skos/core#member> ?a. }'
         for row in graph.query(q):
             yield row['collection'], 'collection'
 
@@ -243,6 +247,7 @@ class GenericAnalyzer(AbstractAnalyzer):
     """Basic RDF dataset analyzer inspecting general properties not related to any particular vocabulary."""
 
     token = 'generic'
+    relations = ['sameAs', 'seeAlso']
 
     def analyze(self, graph):
         """Basic graph analysis."""
@@ -264,16 +269,36 @@ class GenericAnalyzer(AbstractAnalyzer):
         #   - objekty, ktere nejsou subjektem v tomto grafu
         #   - objekty, ktere nemaji typ v tomto grafu
 
-        q = 'SELECT DISTINCT ?o WHERE { ?s ?p ?o . FILTER (URI (?o))}'
-        objects = set([row['o'] for row in graph.query(q) if rfc3987.match(row['o'])])
-        q = 'SELECT DISTINCT ?s WHERE { ?s ?p ?o. FILTER (URI (?s))}'
-        subjects = set([row['s'] for row in graph.query(q) if rfc3987.match(row['s'])])
-        q = 'SELECT DISTINCT ?s WHERE { ?s a ?c. FILTER (URI (?s))}'
-        locally_typed = set([row['s'] for row in graph.query(q) if rfc3987.match(row['s'])])
+        q = 'SELECT DISTINCT ?o WHERE { ?s ?p ?o. FILTER (isIRI(?o))}'
+        objects = set([row['o'] for row in graph.query(q)])
+        q = 'SELECT DISTINCT ?s WHERE { ?s ?p ?o. FILTER (isIRI(?o))}'
+        subjects = set([row['s'] for row in graph.query(q)])
+        q = 'SELECT DISTINCT ?s WHERE { ?s a ?c. FILTER (isIRI(?c))}'
+        locally_typed = set([row['s'] for row in graph.query(q)])
 
         external_1 = objects.difference(subjects)
         external_2 = objects.difference(locally_typed)
         # toto muze byt SKOS Concept definovany jinde
+
+        q = '''
+        SELECT ?x ?label WHERE {
+        OPTIONAL { ?x <http://www.w3.org/2000/01/rdf-schema#label> ?label }
+        OPTIONAL { ?x <http://www.w3.org/2004/02/skos/core#prefLabel> ?label }
+        OPTIONAL { ?x <http://www.w3.org/2004/02/skos/core#altLabel> ?label }
+        }
+        '''
+        red = redis.Redis(connection_pool=redis_pool)
+        with red.pipeline() as pipe:
+            for row in graph.query(q):
+                iri = row['x']
+                label = row['label']
+                if '@' in label:
+                    value, language = label.split('@')
+                else:
+                    value, language = label, None
+                key = ds_title(iri, language)
+                pipe.set(key, value)
+            pipe.execute()
 
         summary = {
             'triples': triples,
@@ -288,9 +313,35 @@ class GenericAnalyzer(AbstractAnalyzer):
 
     def find_relation(self, graph):
         """Two distributions are related if they share resources that are owl:sameAs."""
-        for row in graph.query('SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b }'):
+        for row in graph.query('SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b. }'):
             yield row['a'], 'sameAs'
             yield row['b'], 'sameAs'
+
+        for row in graph.query('SELECT ?a ?b WHERE { {?a <http://www.w3.org/1999/02/22-rdf-syntax-ns#seeAlso> ?b.} UNION {?a <http://www.w3.org/2000/01/rdf-schema#seeAlso> ?b.} }'):
+            yield row['a'], 'seeAlso'
+            yield row['b'], 'seeAlso'
+
+
+class SchemaHierarchicalGeoAnalyzer(AbstractAnalyzer):
+
+    token = 'schema-hierarchical-geo'
+    relations = ['containedInPlace']
+
+    def find_relation(self, graph):
+        q = '''
+        PREFIX schema: <http://schema.org/>
+        SELECT ?x ?place WHERE {
+            ?x schema:containedInPlace ?place.
+        }
+        '''
+        for row in graph.query(q):
+            x = str(row['x'])
+            place = str(row['place'])
+            yield x, 'containedInPlace'
+            yield place, 'containedInPlace'
+
+    def analyze(self, graph):
+        return {}
 
 
 class QbDataset(object):

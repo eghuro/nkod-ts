@@ -4,10 +4,8 @@ import redis
 from atenvironment import environment
 from flask_caching import Cache
 from flask_cors import CORS
-from raven.contrib.flask import Sentry
 
 cache = Cache()
-sentry = Sentry()
 cors = CORS()
 
 
