@@ -53,19 +53,8 @@ class SparqlEndpointAnalyzer(object):
             logging.getLogger(__name__).warn('No named graph when constructing catalog from {endpoint!s}')
             return f'{str1} {str3}'
 
-    def peek_endpoint(self, endpoint):
-        """Extract DCAT datasets from the given endpoint and store them in redis."""
-        log = logging.getLogger(__name__)
-        if not rfc3987.match(endpoint):
-            log.warn(f'{endpoint!s} is not a valid endpoint URL')
-            return
-        for graph_iri in self.get_graphs_from_endpoint(endpoint):
-            ret = self.process_graph(endpoint, graph_iri)
-            if ret is not None:
-                yield ret
-
-    def process_graph(self, endpoint, graph_iri, dump_result_to_redis=True):
-        """Extract DCAT datasets from the given named graph of an endpoint and store them in redis."""
+    def process_graph(self, endpoint, graph_iri):
+        """Extract DCAT datasets from the given named graph of an endpoint."""
         log = logging.getLogger(__name__)
         if not rfc3987.match(endpoint):
             log.warn(f'{endpoint!s} is not a valid endpoint URL')
@@ -81,18 +70,7 @@ class SparqlEndpointAnalyzer(object):
         for s, p, o in g.query(self.__query(endpoint, graph_iri)):
             result.add( (s, p, o) )
 
-        if dump_result_to_redis:
-            r = redis.Redis(connection_pool=redis_pool)
-            key = data_key(endpoint, graph_iri)
-            with r.pipeline() as pipe:
-                pipe.set(key, result.serialize(format='n3'))
-                pipe.sadd('purgeable', key)
-                pipe.expire(key, expiration[KeyRoot.DATA])
-                pipe.execute()
-            log.info(key)
-            return key
-        else:
-            return result
+        return result
 
     def get_graphs_from_endpoint(self, endpoint):
         """Extract named graphs from the given endpoint."""

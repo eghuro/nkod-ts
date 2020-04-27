@@ -99,6 +99,6 @@ def store_named_analysis(results, endpoint_iri, named_graph):
         })
         with red.pipeline() as pipe:
             pipe.sadd('purgeable', key)
-            pipe.set(key, results)
+            pipe.set(key, store)
             pipe.expire(key, expiration[KeyRoot.ANALYSIS])
             pipe.execute()

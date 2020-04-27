@@ -9,7 +9,7 @@ result_serializer = 'json'
 accept_content = ['json']
 timezone = 'Europe/Prague'
 enable_utc = True
-include = ['tsa.tasks.analyze', 'tsa.tasks.batch', 'tsa.tasks.index', 'tsa.tasks.query', 'tsa.tasks.system']
+include = ['tsa.tasks.analyze', 'tsa.tasks.batch', 'tsa.tasks.index', 'tsa.tasks.process', 'tsa.tasks.query', 'tsa.tasks.system']
 broker_transport_options = {
     'fanout_prefix': True,
     'fanout_patterns': True

@@ -127,7 +127,7 @@ def inspect_graph(endpoint_iri, graph_iri):
     log = logging.getLogger(__name__)
     inspector = SparqlEndpointAnalyzer()
     red = inspect_graph.redis
-    return _dcat_extractor(inspector.process_graph(endpoint_iri, graph_iri, False), red, log)
+    return _dcat_extractor(inspector.process_graph(endpoint_iri, graph_iri), red, log)
 
 
 @celery.task()

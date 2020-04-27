@@ -40,7 +40,6 @@ def decompress_gzip(iri, r, red):
         iri = iri[:-3]
     else:
         iri = iri + '/data'
-        #TODO: this might fail the analysis
     key = data_key(iri)
     decompressed = gzip.decompress(data)
     if len(decompressed) > MAX_CONTENT_LENGTH:

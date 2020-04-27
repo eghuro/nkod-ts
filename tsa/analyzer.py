@@ -247,7 +247,7 @@ class GenericAnalyzer(AbstractAnalyzer):
     """Basic RDF dataset analyzer inspecting general properties not related to any particular vocabulary."""
 
     token = 'generic'
-    relations = ['sameAs']
+    relations = ['sameAs', 'seeAlso']
 
     def analyze(self, graph):
         """Basic graph analysis."""
@@ -316,6 +316,10 @@ class GenericAnalyzer(AbstractAnalyzer):
         for row in graph.query('SELECT ?a ?b WHERE { ?a <http://www.w3.org/2002/07/owl#sameAs> ?b. }'):
             yield row['a'], 'sameAs'
             yield row['b'], 'sameAs'
+
+        for row in graph.query('SELECT ?a ?b WHERE { {?a <http://www.w3.org/1999/02/22-rdf-syntax-ns#seeAlso> ?b.} UNION {?a <http://www.w3.org/2000/01/rdf-schema#seeAlso> ?b.} }'):
+            yield row['a'], 'seeAlso'
+            yield row['b'], 'seeAlso'
 
 
 class SchemaHierarchicalGeoAnalyzer(AbstractAnalyzer):

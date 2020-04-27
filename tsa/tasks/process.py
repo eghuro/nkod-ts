@@ -120,7 +120,8 @@ def do_process(iri, task, is_prio=False):
         red.sadd('purgeable', 'stat:failed')
         return
 
-
+# these 2 tasks do the same in low priority queue, however, non-priority one is time constrained AND the processing
+# tasks after decompression will be scheduled into priority queue
 @celery.task(bind=True, time_limit=60, base=TrackableTask)
 def decompress(self, iri, type):
     do_decompress(self, iri, type)
@@ -161,6 +162,7 @@ def do_decompress(task, iri, type, is_prio=False):
 
             if sub_iri.endswith('/data'):  # extracted a file without a filename
                 yield sub_iri, 'text/plain'  # this will allow for analysis to happen
+                continue
 
             try:
                 guess, _ = guess_format(sub_iri, r, log, red)
@@ -270,7 +272,8 @@ def fetch(iri, log, red):
 
     timeout = 5243  # ~87 min
     # a guess for 100 KB/s on data that will still make it into redis (512 MB)
-    # however, regular decompress imposes 1 min limit on the task itself including download
+    # this is mostly a safe stop in case a known RDF (tasks not time constrained) hangs along the way
+    # the idea is to allow for as much time as needed for the known RDF distros, while preventing task queue "jam"
     log.debug(f'Timeout {timeout!s} for {iri}')
     r = session.get(iri, stream=True, timeout=timeout, verify=False)
     r.raise_for_status()
